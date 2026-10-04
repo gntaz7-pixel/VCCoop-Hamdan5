@@ -1,37 +1,33 @@
-Bully Co-op Hamdan v0.15 - Smoother Auto Walk (SOURCE ONLY, NOT COMPILED)
+Bully Co-op Hamdan v0.15b - PREDICTIVE WALK (SOURCE ONLY)
 
-WHAT USER TESTED:
-- v0.13: F9 spawned a second NPC; each F10 issued one walk task and NPC walked briefly.
-- v0.14: F10 auto-reissued walk tasks every >=2800ms; user OBSERVED start-stop-start-stop.
-- Log shows recurring AUTO WALK TASK attached=1, so network and task dispatch are working.
+OBSERVED v0.15: F9 spawned a separate NPC; F10 automatic walking tasks were attached.
+In the user's newest log the NPC sometimes reached within 0.48-0.73 units
+of the current guest point and the engine task was skipped because dist < 0.75.
+This is an explanation for SOME pauses, not a complete proof of their cause.
+Jimmy was independently controllable as observed by the user.
 
-WHAT CHANGED IN v0.15:
-1) The minimum time between NPC walk tasks is now DEFAULT 1300 ms instead of fixed 2800 ms.
-2) Configurable [Experimental] WalkTaskIntervalMs from 900 to 2800 (clamped in code).
-3) Near-destination no-op threshold lowered from 1.10 to 0.75 game coordinate units.
-4) Same NPC identity safety checks, Jimmy clearances, flat Z check, and game-thread execution.
-5) No force-teleport, no direct coordinate writes. One NPC only.
-6) If task updates begin interrupting animation, raise interval to 1700 or 2200.
+WHAT CHANGED:
+- 10Hz guest-position history estimates actual incoming XY direction.
+- Targets are predicted AHEAD in that direction by UP TO 1.8 XY units (configurable).
+- WALK TASKS still use original engine PedMoveToXYZ allocator+constructor+attach,
+  not PedSetPosXYZ teleports or direct memory writes.
+- All previous strict NPC identity and Jimmy XY collision safety checks remain.
+- If incoming guest position is stale/implausible/stationary, prediction is OFF.
+- Diagnostic logs now say raw=... dest=... lead=... so timing can be checked.
+- WalkTaskIntervalMs remains 1300 by default, bounded 900..2800.
 
-These are HYPOTHESES / runtime smoothing test; we have NOT observed a successful v0.15 game run.
-Repeated tasks are still potentially unsafe; no proven task lifetime cleanup and no true continuous path navigation.
+BUILD/TEST (BACKUP GAME ONLY):
+1. Unzip entire source to your gntaz7-pixel/VCCoop-Hamdan5 repo.
+2. GitHub Actions -> Build Bully Co-op Predictive Walk v0.15b (x86).
+3. Download produced dinput8.dll; keep v0.15 DLL as rollback.
+4. Copy into a SEPARATE test installation of Bully: Scholarship Edition.
+5. Name host ini BullyCoop.ini in the SAME folder as Bully.exe.
+6. Start HOST in open flat space; launch THIS archive's fake guest .cmd;
+   wait for HOST FOUND!; F9 once to spawn; F10 once for automatic walking.
+7. Observe at most 20 seconds; F10 again to stop new walk instructions.
+8. Upload full BullyCoop_bridge.log and describe whether walking is smoother.
 
-HOW TO TEST:
-- BACK UP the last known working dinput8.dll and use a SEPARATE copied Bully folder.
-- Replace GitHub repository files with this ZIP's contents, run Action:
-  Build Bully Co-op Smoother Auto Walk v0.15 (x86)
-- Replace only the TEST copy dinput8.dll with Actions build output.
-- Keep your previous BullyCoop.ini [Network] and enabled NPC settings, ADD:
-  WalkTaskIntervalMs=1300 under [Experimental].
-- Start Bully as HOST in an open flat area. Launch THIS PACKAGE's FAKE_GUEST_NEAR_JIMMY.cmd.
-- Wait for HOST FOUND!  F9 once creates second NPC; F10 once enables auto walk;
-  monitor 10-15 seconds, press F10 again to stop NEW walk tasks.
-- If motion still pauses, do not blindly lower interval; report logs/video.
-- If movement gets jerky try WalkTaskIntervalMs=1800 and restart game.
-- STOP immediately for Jimmy involuntary movement, wall/ground clipping or crash.
-- Do not save the game during test.
-
-INI example:
+EXAMPLE BullyCoop.ini:
 [Network]
 Enabled=1
 Role=host
@@ -43,7 +39,15 @@ EnableNPCSpawnProbe=1
 EnableRemoteMovementProbe=1
 EnableNPCWalkProbe=1
 WalkTaskIntervalMs=1300
+WalkLeadCm=180
 
-This is an offline reverse-engineering prototype for matching Bully.exe ONLY,
-not real two-player playable co-op. No quest synchronization, combat sync, saves,
-asset sync, collision guarantees, or secure internet networking.
+WalkLeadCm=0 disables lookahead without needing to recompile.
+Do not increase over 240; values outside bounds are automatically clamped.
+
+LIMITATIONS:
+- Source package only; Windows/GitHub build and in-game behavior UNTESTED.
+- Task reallocation may still interrupt animations; no proven cleanup/pathfinding.
+- Predictions can overshoot corners, do not test in alleys/near walls/NPC crowds.
+- One experimental NPC; not controllable guest / not online multiplayer yet.
+- Never save game in experimental session; stop if Jimmy involuntary movement,
+  wall clipping or crash.
