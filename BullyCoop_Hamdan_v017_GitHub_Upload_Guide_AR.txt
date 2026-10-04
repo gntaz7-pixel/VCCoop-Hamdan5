@@ -1,0 +1,42 @@
+Bully Co-op Hamdan v0.17 — رفع ملفات GitHub من الصفر
+=====================================================
+
+الملف BullyCoop_Hamdan_v017_Complete_For_GitHub.zip هو ملفات المصدر، وليس DLL جاهزًا أو لعبة كاملة.
+لا ترفع ملف ZIP نفسه إلى GitHub. فك الضغط أولاً ثم ارفع محتوياته مع المحافظة على المجلدات والمسارات.
+لا ترفع Bully.exe أو أي ملف من اللعبة الأصلية أو اللوقات.
+
+1. افتح github.com ثم مستودع VCCoop-Hamdan5 واختر الفرع main.
+2. Code -> Add file -> Upload files.
+3. اسحب محتويات مجلد فك الضغط (المجلدات launcher وbridge وtests وHOST_COPY وGUEST_COPY وبقية الملفات) للموقع.
+   إن كان متصفحك لا يحتفظ بمسارات المجلدات، استخدم GitHub Desktop للرفع، أو أنشئ المسارات يدويًا.
+4. اضغط Commit changes مباشرة إلى main.
+5. الأهم: افتح Code -> .github -> workflows وتأكد من وجود build-bully-launcher.yml.
+   إذا لم يظهر، من Code -> Add file -> Create new file، اكتب اسم الملف:
+   .github/workflows/build-bully-launcher.yml
+   ثم افتح النسخة المستقلة من build-bully-launcher.yml في كمبيوترك، انسخ محتواها كله إلى المحرر واضغط Commit changes.
+6. في الصفحة الرئيسية Code يجب أن توجد هذه المسارات:
+   BUILD_WINDOWS.cmd
+   BUILD_LAUNCHER.cmd
+   launcher/BullyCoopLauncher.cs
+   bridge/dinput8_proxy.cpp
+   bridge/dinput8.def
+   bridge/loopback_wire.h
+   bridge/safe_walk_planner.h
+   tests/test_loopback_wire.cpp
+   tests/test_safe_walk.cpp
+   README_LAUNCHER_AR.txt
+   .github/workflows/build-bully-launcher.yml
+7. افتح Settings -> Actions -> General وتأكد أن Actions متاحة للمستودع (إن كانت معطلة).
+8. افتح Actions من GitHub، واختر:
+   Build Bully Co-op HAMDAN LAN LAUNCHER v0.17
+   واضغط Run workflow، ثم اختر main واضغط الزر الأخضر.
+9. بعد نجاح البناء، افتح تشغيل الـAction؛ من Artifacts نزّل:
+   BullyCoop-Hamdan-v017-LAN-Launcher-Windows
+10. فك Artifact، وستجد ZIP ثاني باسم BullyCoop_Hamdan_Launcher_v017_Windows_x86.zip؛ فكّه أيضًا.
+    الملفات الفعلية من البناء: BullyCoopLauncher.exe وdinput8.dll وREADME_LAUNCHER_AR.txt.
+11. ضع dinput8.dll بجانب Bully.exe في نسختَي HOST وGUEST (أغلق الألعاب قبل الاستبدال).
+    لا تضع ملفات cpp أو cs أو yml في مجلد اللعبة.
+12. شغّل BullyCoopLauncher.exe واتبع README_LAUNCHER_AR.txt.
+
+ملاحظة: لانشر v0.17 اختبار Alpha ولا يوفر Co-op كاملًا بعد.
+إذا لم يظهر Action فصور Code/.github/workflows؛ إذا فشل البناء افتح الـAction الأحمر وأرسل نص الخطأ.
