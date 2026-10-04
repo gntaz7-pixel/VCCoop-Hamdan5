@@ -21,4 +21,10 @@ if not exist "out\dinput8.dll" (
   echo ERROR: DLL was not produced.
   exit /b 1
 )
+rem Compile and run a Windows x86 planner safety test (independent of Bully.exe).
+cl /nologo /W4 /EHsc /std:c++17 "tests\test_safe_walk.cpp" /Fe:"out\test_safe_walk.exe"
+if errorlevel 1 exit /b 1
+"out\test_safe_walk.exe"
+if errorlevel 1 exit /b 1
+echo PASS: safe waypoint planner tests
 echo SUCCESS: out\dinput8.dll

@@ -1,33 +1,27 @@
-Bully Co-op Hamdan v0.15b - PREDICTIVE WALK (SOURCE ONLY)
+Bully Co-op Hamdan v0.15c — SAFE CATCH-UP / STAND-OFF (SOURCE ONLY)
 
-OBSERVED v0.15: F9 spawned a separate NPC; F10 automatic walking tasks were attached.
-In the user's newest log the NPC sometimes reached within 0.48-0.73 units
-of the current guest point and the engine task was skipped because dist < 0.75.
-This is an explanation for SOME pauses, not a complete proof of their cause.
-Jimmy was independently controllable as observed by the user.
+WHY: last v0.15b log had multiple WALK SKIPPED attempts at dist 9..23 XY units: the old 8-unit cap blocked catch-up indefinitely. Other skips came from the straight walk chord crossing within ~2.75 of Jimmy. User reports occasional smooth walking but recurring stalls.
 
-WHAT CHANGED:
-- 10Hz guest-position history estimates actual incoming XY direction.
-- Targets are predicted AHEAD in that direction by UP TO 1.8 XY units (configurable).
-- WALK TASKS still use original engine PedMoveToXYZ allocator+constructor+attach,
-  not PedSetPosXYZ teleports or direct memory writes.
-- All previous strict NPC identity and Jimmy XY collision safety checks remain.
-- If incoming guest position is stale/implausible/stationary, prediction is OFF.
-- Diagnostic logs now say raw=... dest=... lead=... so timing can be checked.
-- WalkTaskIntervalMs remains 1300 by default, bounded 900..2800.
+CHANGES
+- Distances greater than 8 XY units are broken into at most 5.8-unit engine walking tasks, rather than rejected.
+- If walking in a straight line would pass near Jimmy, a side-step / orbit-style waypoint is planned OUTSIDE his protective radius.
+- If predictive remote target ends up near Jimmy, the waypoint remains at safe stand-off distance.
+- Strict NPC vs player ACTOR and TRANSFORM identity checks retained.
+- Strict flat Z ground check retained; no teleport, no direct position writing, no per-frame calls.
+- The source now has standalone C++ planner tests, compiled by GitHub Actions' Windows build script.
+- Logs explicitly name DIRECT or DETOUR / CATCHUP / REACHED / UNSAFE.
 
-BUILD/TEST (BACKUP GAME ONLY):
-1. Unzip entire source to your gntaz7-pixel/VCCoop-Hamdan5 repo.
-2. GitHub Actions -> Build Bully Co-op Predictive Walk v0.15b (x86).
-3. Download produced dinput8.dll; keep v0.15 DLL as rollback.
-4. Copy into a SEPARATE test installation of Bully: Scholarship Edition.
-5. Name host ini BullyCoop.ini in the SAME folder as Bully.exe.
-6. Start HOST in open flat space; launch THIS archive's fake guest .cmd;
-   wait for HOST FOUND!; F9 once to spawn; F10 once for automatic walking.
-7. Observe at most 20 seconds; F10 again to stop new walk instructions.
-8. Upload full BullyCoop_bridge.log and describe whether walking is smoother.
+HOW TO BUILD
+1. Upload the extracted ZIP content to GitHub project gntaz7-pixel/VCCoop-Hamdan5.
+2. GitHub Actions -> Build Bully Co-op Safe Catchup v0.15c (x86).
+3. Get out/dinput8.dll from Actions artifact BullyCoop-Hamdan-SafeCatchup-v15c-x86.
+4. Preserve last working v0.15b DLL for rollback and use a separate test copy of Bully.
+5. Place BullyCoop.ini in Bully.exe directory, using the host INI below.
+6. In a wide FLAT area, start only this ZIP's FAKE_GUEST_NEAR_JIMMY.cmd and wait HOST FOUND!
+7. F9 spawn once, F10 ON, watch 20 seconds; F10 OFF (last walking task may finish).
+8. Send BullyCoop_bridge.log and describe NPC stop-go and whether base Jimmy works.
 
-EXAMPLE BullyCoop.ini:
+BullyCoop.ini
 [Network]
 Enabled=1
 Role=host
@@ -41,13 +35,9 @@ EnableNPCWalkProbe=1
 WalkTaskIntervalMs=1300
 WalkLeadCm=180
 
-WalkLeadCm=0 disables lookahead without needing to recompile.
-Do not increase over 240; values outside bounds are automatically clamped.
-
-LIMITATIONS:
-- Source package only; Windows/GitHub build and in-game behavior UNTESTED.
-- Task reallocation may still interrupt animations; no proven cleanup/pathfinding.
-- Predictions can overshoot corners, do not test in alleys/near walls/NPC crowds.
-- One experimental NPC; not controllable guest / not online multiplayer yet.
-- Never save game in experimental session; stop if Jimmy involuntary movement,
-  wall clipping or crash.
+LIMITATIONS
+- Only test geometry / sources verified offline; no real Windows compile or Bully game run performed here.
+- Geometry checks do NOT navigate walls, slopes, NPC collisions, or obstacles. Open flat area ONLY.
+- Do not save; stop immediately if unintended Jimmy movement, terrain clipping, or crash.
+- This is a fake guest, NOT 2-device online multiplayer. Next milestone (v0.16) = first 2-device LAN positions and walking.
+- If NPC is despawned and logs "no DISTINCT valid NPC; AUTO OFF", reload test session rather than forcing stale handle.
