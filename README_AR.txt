@@ -1,53 +1,46 @@
-﻿Bully Co-op — Hamdan Edition v0.8 (EXPERIMENTAL REMOTE PED MOVEMENT)
-====================================================================
-المثبت عملياً على جهاز حمدان قبل هذه الحزمة:
-- v0.3: dinput8 proxy يشتغل داخل Bully.
-- v0.5: قراءة موقع جيمي داخل اللعبة.
-- v0.6: استقبال إحداثيات عميل وهمي عبر UDP.
-- v0.7: حمدان أكد ظهور شخصية NPC ثانية عند الضغط على F9 بدون مشاكل.
+﻿Bully Co-op Hamdan v0.9 - FLAT-GROUND SAFE MOVE TEST (SOURCE ONLY)
+================================================================
+IMPORTANT: This is not a finished co-op mod. v0.8 glitched through ground/walls on Hamdan's computer; its movement MUST NOT be used. v0.9 has NOT been compiled or game-tested.
 
-جديد v0.8: تجربة تحريك نفس الشخصية باحداثيات العميل المستقبلّة من UDP.
-لم يتم تشغيل أو تجريب v0.8 داخل Bully على ويندوز بعد. هذه حزمة مصدرية
-تحتاج Build عبر GitHub Actions؛ لا تحتوي على DLL جاهز.
+WHAT ACTUALLY HAPPENED IN v0.8:
+- The F9 spawn works visually (confirmed by user).
+- F10 force-teleported the character to received X/Y/Z every ~150ms.
+- The log recorded Z jumps 5.81 -> -1.43 -> 8.71 -> 11.41, and a vanished NPC handle in one session.
+- Fake guest was drawing a circle around Jimmy without validating ground, walls or different areas.
+- Toggling F10 OFF returns NPC to engine-native behavior; game physics likely fights forced positioning.
 
-مبادئ الأمان:
-* لا إنشاء تلقائي للشخصية: فقط F9 إذا EnableNPCSpawnProbe=1.
-* لا حركة تلقائية: يلزم EnableRemoteMovementProbe=1 و F10 للتفعيل؛ F10 مرة ثانية للإيقاف.
-* إذا غاب العميل أو قدم بيانات قديمة عن 1.2 ثانية لا تحدث حركة.
-* إذا كان العميل أبعد من 40 متراً عن جيمي، لا تحدث حركة (قيد تجربة فقط).
-* تنفَّذ استدعاءات المحرك فقط على خيط نافذة اللعبة، وليس خيط UDP.
-* لكل ملف exe مختلف، إذا فشلت تواقيع المحرك تُحجب العملية.
-* إذا فقدنا الـNPC handle أو حصل استثناء Windows تتوقف الحركة تلقائياً.
-* لا مزامنة مهمات، قتال، أنيميشن، خرائط مختلفة، زوايا الدوران أو الصوت بعد.
+WHAT CHANGED IN v0.9:
+- Never directly copy remote Z to ped; retain its OWN current Z.
+- Read NPC world position and move only <=0.12 units PER invocation toward valid horizontal targets.
+- Reject guest X/Y more than 6 units from Jimmy or more than 5 units from NPC; NPC >10 from Jimmy also blocked.
+- Reject if player or packet height differs >0.65 from spawn height, or NPC Z differs >0.90; STOP if unsafe.
+- Require fresh guest data <=450ms; only one queued movement message at a time.
+- If NPC handle no longer exists, disable movement and require GAME RESTART.
+- Fake guest orbit reduced from 3.0 to 1.8 units, speed 0.65 to 0.30 rad/s.
 
-التجربة على جهاز واحد:
-1) خذ نسخة احتياطية من اللعبة ومن ملفات الحفظ (لا تحفظ أثناء التجربة).
-2) فك ZIP وارفع كامل محتواه إلى GitHub بنفس الطريقة السابقة، مع استبدال
-   bridge/dinput8_proxy.cpp وملف BUILD_WINDOWS.cmd والـ workflow.
-3) في GitHub Actions ابحث عن Build Bully Co-op NPC Movement v0.8 (x86)
-   أو شغّل آخر بناء ظاهر. إذا فشل ارسل سجل الخطأ ولا تغيّر DLL الحالي.
-4) حمّل out/dinput8.dll من Artifacts ثم اغلق اللعبة، وبدّل DLL القديم
-   بنسخة الجديدة في مجلد لعبة اختباري يحتوي Bully.exe.
-5) انسخ محتوى EXPERIMENT_HOST_ENABLE.ini إلى BullyCoop.ini في نفس المجلد.
-6) شغّل FAKE_GUEST_NEAR_JIMMY.cmd من نفس مجلد اللعبة (أو مجلد آخر).
-   يتصل فقط 127.0.0.1:7791، ويحاول الدوران حول إحداثيات جيمي الفعلية
-   بعد أول رد من الهوست. لا تشغّل أكثر من هوست على منفذ 7791 بنفس الجهاز.
-7) شغّل Bully مرة واحدة وادخل وضع التجول الحر؛ انتظر HOST FOUND!
-8) اضغط F9 مرة لتظهر شخصية جديدة. بعدها اضغط F10 مرة لتبدأ تجربة الحركة.
-9) شاهد إذا انتقلت الشخصية أو تحركت. لتوقيف الحركة اضغط F10 ثانية.
-10) أغلق اللعبة بدون حفظ وأرسل BullyCoop_bridge.log وصورة أو وصف النتيجة.
+LIMITATION: This still directly steps NPC position; it is NOT pathfinding or collision-safe. If there is a wall in the path the NPC can STILL clip through. TEST ONLY on flat open ground away from walls/steps/pools/roofs. A real fix needs a verified engine AI pathfinding/walking primitive. The first crash's exact cause is NOT proven by the log.
 
-رسائل منتظرة داخل اللوق:
-  === BullyCoop Hamdan v0.8 NEW SESSION ===
-  BullyCoop v0.8: NPC movement signatures VERIFIED ...
-  BullyCoop v0.7: NPC spawn CALL RETURNED handle=...
-  BullyCoop v0.8: F10 -> remote NPC movement ENABLED
-  BullyCoop v0.8: NPC MOVED handle=... x=... y=... z=...
+BUILD IN GITHUB:
+1. BACK UP your old dinput8.dll and game folder/save files.
+2. Upload ZIP contents to GitHub repo; make sure bridge/dinput8_proxy.cpp and BUILD_WINDOWS.cmd are replaced.
+3. GitHub Actions -> Build Bully Co-op SAFE NPC Movement v0.9 (x86).
+4. Extract artifact out/dinput8.dll and replace DLL in a SEPARATE TEST COPY of Bully.
+5. Place BullyCoop.ini next to Bully.exe:
+[Network]
+Enabled=1
+Role=host
+Port=7791
+SessionCode=246813
+[Experimental]
+EnableNPCSpawnProbe=1
+EnableRemoteMovementProbe=1
 
-إذا لم تظهر أي حركة، ابحث عن رسائل waiting for FRESH remote position
-أو >40m away، وارسل لوق التجربة. رجوع NPC MOVED يعني نجاح الاستدعاء
-وليس دليلاً نهائياً على حركة ظاهرة إلى أن يؤكد المستخدم بعينه.
+ONE-PC TEST:
+6. Run FAKE_GUEST_NEAR_JIMMY.cmd, keep open.
+7. Start Bully once, load free roam, find OPEN FLAT outdoor area.
+8. Press F9 ONCE to spawn; F10 ONCE to attempt SMALL XY steps; F10 again to stop.
+9. If anything glitches, F10 OFF, quit WITHOUT saving, and send fresh BullyCoop_bridge.log.
+10. Check log for v0.9 NPC STEP or movement SKIPPED/unsafe/ AUTO-DISABLED.
 
-لإيقاف التجربة فقط: عدّل EnableRemoteMovementProbe=0 أو
-EnableNPCSpawnProbe=0، ثم أعد تشغيل اللعبة.
-"Bully" هنا نسخة المستخدم الأصلية فقط؛ لا تستخدم على exe مختلف.
+EMERGENCY DISABLE: change EnableRemoteMovementProbe=0 and restart; F9 spawn still works.
+NO GUARANTEES: not compiled on Windows or tested inside game by the author.

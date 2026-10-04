@@ -1,5 +1,5 @@
-// Bully Co-op Hamdan | NPC movement experiment v0.8 | Bully: Scholarship Edition (user-provided build only).
-// EXPERIMENT: network positions remain read-only unless operator separately opts in to F9 SPAWN and F10 MOVE.
+// Bully Co-op Hamdan | SAFE NPC movement experiment v0.9 | Bully: Scholarship Edition (user-provided build only).
+// EXPERIMENT v0.9: flat-ground limited XY steps only; Z is NOT copied from network to the NPC.
 // This is NOT a verified co-op mod. Never test in your only game installation.
 // This DLL is a DirectInput 8 proxy: it forwards actual input calls to the system DLL.
 #define WIN32_LEAN_AND_MEAN
@@ -468,6 +468,18 @@ static bool g_movementProbeAllowed = false;
 static bool g_movementNativeVerified = false;
 static DWORD g_lastFollowLog = 0;
 static DWORD g_lastMoveSkipLog = 0;
+// Once we create a NPC, keep a fixed flat-ground safety anchor for this test session.
+// This is not pathfinding, ground detection, or reliable live remote-player movement.
+static Position g_npcSpawnAnchor = {};
+static bool g_npcSpawnAnchorValid = false;
+static DWORD g_lastNpcMoveTick = 0;
+static std::atomic<bool> g_movePostPending{false};
+static const float kMaxTargetFromJimmy = 6.0f; // avoid off-screen / far-away teleports
+static const float kMaxNpcFromJimmy = 10.0f;
+static const float kMaxRemoteDzFromSpawn = 0.65f; // FLAT GROUND only
+static const float kMaxNpcDzFromSpawn = 0.90f;
+static const float kMaxHorizontalStepPerCall = 0.12f; // <=0.8m/s at 150ms
+static const float kMaxTargetFromNpc = 5.0f; // must not chase/teleport across distant geometry
 // Only the UDP thread writes this mailbox. Window thread reads a snapshot.
 static SRWLOCK g_remoteLock = SRWLOCK_INIT;
 static Position g_remoteSnapshot = {};
@@ -482,11 +494,36 @@ static void PublishRemoteSnapshot(const NetworkProbe& network) {
     ReleaseSRWLockExclusive(&g_remoteLock);
 }
 
+// For safety, read the NPC's OWN transform, do not assume its Z equals Jimmy's.
+// Actor transform layout is validated for Jimmy in v0.5; NPC layout/behavior
+// remains experimental and the call is protected by ReadProcessMemory checks.
+static bool ReadPedWorldPosition(void* ped, Position* out) {
+    if (!ped || !out) return false;
+    const uintptr_t actor = reinterpret_cast<uintptr_t>(ped);
+    if (actor < 0x10000u || actor > 0x7fffffffu) return false;
+    uint32_t nested = 0;
+    if (!ReadAt(actor + 0x1554u, &nested)) return false;
+    uint32_t transform = 0;
+    uintptr_t address = 0;
+    if (nested) {
+        if (!ReadAt(static_cast<uintptr_t>(nested) + 0x14u, &transform)) return false;
+        address = transform ? static_cast<uintptr_t>(transform) + 0x30u :
+                              static_cast<uintptr_t>(nested) + 0x04u;
+    } else {
+        if (!ReadAt(actor + 0x14u, &transform)) return false;
+        address = transform ? static_cast<uintptr_t>(transform) + 0x30u : actor + 0x04u;
+    }
+    return ReadAt(address, out) && ValidNetworkPosition(*out);
+}
+
 static void RunNpcMovementExperiment() {
-    if (!g_followEnabled.load() || !g_movementProbeAllowed || !g_movementNativeVerified) return;
+    if (!g_followEnabled.load() || !g_movementProbeAllowed || !g_movementNativeVerified ||
+        !g_npcSpawnAnchorValid) return;
     const int handle = g_npcHandle.load();
     if (handle <= 0) return;
     const DWORD tick = GetTickCount();
+    // Ignore queued movement messages if the game becomes busy or loses focus.
+    if (g_lastNpcMoveTick && tick - g_lastNpcMoveTick < 135) return;
     Position remote = {};
     DWORD lastReceived = 0;
     bool haveRemote = false;
@@ -495,9 +532,9 @@ static void RunNpcMovementExperiment() {
     lastReceived = g_remoteSnapshotTick;
     haveRemote = g_remoteSnapshotValid;
     ReleaseSRWLockShared(&g_remoteLock);
-    if (!haveRemote || tick - lastReceived > 1200 || !ValidNetworkPosition(remote)) {
-        if (tick - g_lastMoveSkipLog >= 5000) {
-            WriteProbeLog("BullyCoop v0.8: NPC move waiting for FRESH remote position\r\n");
+    if (!haveRemote || tick - lastReceived > 450 || !ValidNetworkPosition(remote)) {
+        if (tick - g_lastMoveSkipLog >= 4000) {
+            WriteProbeLog("BullyCoop v0.9: STOPPED updating: stale/invalid remote position\r\n");
             g_lastMoveSkipLog = tick;
         }
         return;
@@ -505,47 +542,83 @@ static void RunNpcMovementExperiment() {
     const uintptr_t base = reinterpret_cast<uintptr_t>(GetModuleHandleA(nullptr));
     Position jimmy = {};
     if (ReadJimmyPosition(base, &jimmy) != PositionStatus::Good) return;
-    // Safety/streaming guard: this is a nearby-only experiment; full world
-    // streaming and areas/missions are NOT synchronized yet.
-    const float dx = remote.x - jimmy.x;
-    const float dy = remote.y - jimmy.y;
-    const float dz = remote.z - jimmy.z;
-    if (dx * dx + dy * dy + dz * dz > 40.0f * 40.0f) {
-        if (tick - g_lastMoveSkipLog >= 5000) {
-            WriteProbeLog("BullyCoop v0.8: remote player >40m away; movement skipped for test safety\r\n");
+    if (std::fabs(remote.z - g_npcSpawnAnchor.z) > kMaxRemoteDzFromSpawn ||
+        std::fabs(jimmy.z - g_npcSpawnAnchor.z) > kMaxRemoteDzFromSpawn) {
+        // Never copy wild under-ground/stair/roof Z levels into NPC's location.
+        if (tick - g_lastMoveSkipLog >= 4000) {
+            WriteProbeLog("BullyCoop v0.9: move SKIPPED: Z changed; FLAT GROUND ONLY\r\n");
             g_lastMoveSkipLog = tick;
         }
         return;
     }
-    // Names inferred from PedSetPosXYZ native wrapper, not public Bully SDK.
+    const float rx = remote.x - jimmy.x;
+    const float ry = remote.y - jimmy.y;
+    if (rx*rx + ry*ry > kMaxTargetFromJimmy*kMaxTargetFromJimmy) {
+        if (tick - g_lastMoveSkipLog >= 4000) {
+            WriteProbeLog("BullyCoop v0.9: move SKIPPED: guest >6m from Jimmy\r\n");
+            g_lastMoveSkipLog = tick;
+        }
+        return;
+    }
     typedef void* (__cdecl* LookupPedFn)(int handle, int actorType);
     typedef void (__cdecl* SetActorPositionFn)(void* actor, const Position* xyz);
     LookupPedFn lookup = reinterpret_cast<LookupPedFn>(base + kPedLookupRva);
     SetActorPositionFn setPosition = reinterpret_cast<SetActorPositionFn>(base + kPedSetPosLowLevelRva);
-    bool applied = false;
-    bool missingPed = false;
+    bool missingPed = false, applied = false, outOfRange = false, tooFar = false;
+    Position stepped = {};
     __try {
-        void* npc = lookup(handle, 2); // type=2: ped, never type=3 (Jimmy)
-        if (npc) {
-            setPosition(npc, &remote);
-            applied = true;
-        } else {
+        void* npc = lookup(handle, 2); // NPC/ped, NEVER player actorType=3
+        if (!npc) {
             missingPed = true;
+        } else {
+            Position current = {};
+            if (!ReadPedWorldPosition(npc, &current) ||
+                std::fabs(current.z - g_npcSpawnAnchor.z) > kMaxNpcDzFromSpawn) {
+                outOfRange = true;
+            } else {
+                const float npcFromJimmyX = current.x - jimmy.x;
+                const float npcFromJimmyY = current.y - jimmy.y;
+                const float dX = remote.x - current.x;
+                const float dY = remote.y - current.y;
+                const float d2 = dX*dX + dY*dY;
+                if (npcFromJimmyX*npcFromJimmyX + npcFromJimmyY*npcFromJimmyY >
+                     kMaxNpcFromJimmy*kMaxNpcFromJimmy ||
+                    d2 > kMaxTargetFromNpc*kMaxTargetFromNpc) {
+                    tooFar = true;
+                } else if (d2 > 0.025f * 0.025f) {
+                    const float d = std::sqrt(d2);
+                    const float frac = (d > kMaxHorizontalStepPerCall) ?
+                        kMaxHorizontalStepPerCall / d : 1.0f;
+                    stepped.x = current.x + dX * frac;
+                    stepped.y = current.y + dY * frac;
+                    stepped.z = current.z; // CRITICAL: retain actor's own Z; never remote Z
+                    setPosition(npc, &stepped);
+                    applied = true;
+                    g_lastNpcMoveTick = tick;
+                }
+            }
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         g_followEnabled.store(false);
-        WriteProbeLog("BullyCoop v0.8: movement raised Windows exception; AUTO-DISABLED\r\n");
+        WriteProbeLog("BullyCoop v0.9: NPC position call raised Windows exception; AUTO-DISABLED\r\n");
         return;
     }
-    if (missingPed) {
+    if (missingPed || outOfRange) {
         g_followEnabled.store(false);
-        WriteProbeLog("BullyCoop v0.8: NPC handle no longer exists; AUTO-DISABLED\r\n");
+        if (missingPed) g_npcHandle.store(-1);
+        WriteProbeLog(missingPed ?
+            "BullyCoop v0.9: NPC handle disappeared; AUTO-DISABLED; restart to respawn\r\n" :
+            "BullyCoop v0.9: NPC position/Z unsafe; AUTO-DISABLED\r\n");
+    } else if (tooFar) {
+        if (tick - g_lastMoveSkipLog >= 4000) {
+            WriteProbeLog("BullyCoop v0.9: movement SKIPPED: NPC too far from target; no teleport\r\n");
+            g_lastMoveSkipLog = tick;
+        }
     } else if (applied && (g_lastFollowLog == 0 || tick - g_lastFollowLog >= 2500)) {
         char msg[200] = {};
         sprintf_s(msg, sizeof(msg),
-                  "BullyCoop v0.8: NPC MOVED handle=%d x=%.2f y=%.2f z=%.2f age_ms=%lu\r\n",
-                  handle, remote.x, remote.y, remote.z,
-                  static_cast<unsigned long>(tick - lastReceived));
+            "BullyCoop v0.9: NPC STEP handle=%d x=%.2f y=%.2f z=%.2f age_ms=%lu\r\n",
+            handle, stepped.x, stepped.y, stepped.z, static_cast<unsigned long>(tick-lastReceived));
         WriteProbeLog(msg);
         g_lastFollowLog = tick;
     }
@@ -583,8 +656,11 @@ static void RunNpcSpawnExperiment() {
     WriteProbeLog(msg);
     if (returnedHandle > 0) {
         g_npcHandle.store(returnedHandle);
+        g_npcSpawnAnchor = player;
+        g_npcSpawnAnchorValid = true;
+        g_lastNpcMoveTick = 0;
         if (g_movementProbeAllowed) {
-            WriteProbeLog("BullyCoop v0.8: NPC spawned; press F10 to start/stop nearby remote movement\r\n");
+            WriteProbeLog("BullyCoop v0.9: NPC spawned; press F10 to toggle SAFE XY steps\r\n");
         }
     }
 }
@@ -596,6 +672,7 @@ static LRESULT CALLBACK NpcTestMessageHook(int code, WPARAM wp, LPARAM lp) {
         MSG* msg = reinterpret_cast<MSG*>(lp);
         if (g_spawnMessage && msg->message == g_spawnMessage &&
             msg->hwnd == g_gameWindow) {
+            if (msg->wParam == 1) g_movePostPending.store(false);
             if (GetForegroundWindow() == g_gameWindow) {
                 if (msg->wParam == 0) RunNpcSpawnExperiment();
                 else if (msg->wParam == 1) RunNpcMovementExperiment();
@@ -628,22 +705,22 @@ static bool InstallNpcTestWindowHook() {
     if (!wnd) return false;
     const DWORD windowThread = GetWindowThreadProcessId(wnd, nullptr);
     if (!windowThread) return false;
-    const UINT message = RegisterWindowMessageA("BullyCoop_Hamdan_NPC_Spawn_Move_v08");
+    const UINT message = RegisterWindowMessageA("BullyCoop_Hamdan_NPC_SafeMove_v09");
     if (!message) return false;
     HHOOK hook = SetWindowsHookExA(WH_GETMESSAGE, NpcTestMessageHook, nullptr, windowThread);
     if (!hook) return false;
     g_spawnMessage = message;
     g_gameWindow = wnd;
     g_gameMessageHook = hook;
-    WriteProbeLog("BullyCoop v0.8: NPC test armed; press F9 once INSIDE the game\r\n");
+    WriteProbeLog("BullyCoop v0.9: NPC test armed; press F9 once INSIDE the game\r\n");
     return true;
 }
 
 static DWORD WINAPI PositionThread(LPVOID parameter) {
     const uintptr_t base = reinterpret_cast<uintptr_t>(parameter);
     if (!VersionMatches(base)) return 0;
-    WriteProbeLog("\r\n=== BullyCoop Hamdan v0.8 NEW SESSION ===\r\n");
-    WriteProbeLog("BullyCoop position v0.8: network + opt-in NPC spawn/movement probe\r\n");
+    WriteProbeLog("\r\n=== BullyCoop Hamdan v0.9 NEW SESSION ===\r\n");
+    WriteProbeLog("BullyCoop position v0.9: network + opt-in NPC spawn/SAFE movement probe\r\n");
     NetworkProbe network = {};
     const bool networkEnabled = InitNetwork(&network);
     char probeIni[MAX_PATH] = {};
@@ -661,11 +738,11 @@ static DWORD WINAPI PositionThread(LPVOID parameter) {
     if (g_movementProbeAllowed) {
         g_movementNativeVerified = ValidatePedMovementFunction(base);
         WriteProbeLog(g_movementNativeVerified ?
-            "BullyCoop v0.8: NPC movement signatures VERIFIED; press F9 then F10 (manual opt-in)\r\n" :
-            "BullyCoop v0.8: NPC movement native signature mismatch; MOVEMENT BLOCKED\r\n");
+            "BullyCoop v0.9: SAFE movement signatures VERIFIED; press F9 then F10 (flat area only)\r\n" :
+            "BullyCoop v0.9: movement native signature mismatch; MOVEMENT BLOCKED\r\n");
         if (!g_movementNativeVerified) g_movementProbeAllowed = false;
     } else {
-        WriteProbeLog("BullyCoop v0.8: movement DISABLED (safe default)\r\n");
+        WriteProbeLog("BullyCoop v0.9: movement DISABLED (safe default)\r\n");
     }
     bool previouslyAvailable = false;
     Position previous = {};
@@ -724,9 +801,10 @@ static DWORD WINAPI PositionThread(LPVOID parameter) {
             GetForegroundWindow() == g_gameWindow) {
             const bool turnOn = !g_followEnabled.load();
             g_followEnabled.store(turnOn);
+            if (turnOn) g_lastNpcMoveTick = 0;
             WriteProbeLog(turnOn ?
-                "BullyCoop v0.8: F10 -> remote NPC movement ENABLED\r\n" :
-                "BullyCoop v0.8: F10 -> remote NPC movement STOPPED\r\n");
+                "BullyCoop v0.9: F10 -> SAFE NPC movement ENABLED\r\n" :
+                "BullyCoop v0.9: F10 -> SAFE NPC movement STOPPED\r\n");
         }
         f10PreviouslyDown = f10Down;
         if (networkEnabled) {
@@ -738,10 +816,13 @@ static DWORD WINAPI PositionThread(LPVOID parameter) {
             if (g_movementProbeAllowed && g_followEnabled.load() &&
                 g_npcHandle.load() > 0 && status == PositionStatus::Good &&
                 g_gameWindow && GetForegroundWindow() == g_gameWindow &&
-                tick - lastMovePost >= 150) {
+                tick - lastMovePost >= 150 && !g_movePostPending.load()) {
                 // All Bully engine calls stay on the game window thread.
+                g_movePostPending.store(true);
                 if (PostMessageA(g_gameWindow, g_spawnMessage, 1, 0))
                     lastMovePost = tick;
+                else
+                    g_movePostPending.store(false);
             }
         }
     }

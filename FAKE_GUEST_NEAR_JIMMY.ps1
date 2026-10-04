@@ -48,7 +48,7 @@ try {
     $udp.Connect($hostIP, $hostPort)
     $udp.Client.ReceiveTimeout = 150
     $sender = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Any, 0)
-    Write-Host 'FAKE GUEST v0.8 -> orbiting near Jimmy on 127.0.0.1 (one Bully instance only)' -ForegroundColor Cyan
+    Write-Host 'FAKE GUEST v0.9 -> slow SMALL orbit on 127.0.0.1; open flat area ONLY' -ForegroundColor Cyan
     Write-Host 'Start Bully.exe configured as HOST and walk in the game.'
     Write-Host 'Waiting for HOST replies; press Ctrl+C to stop.'
     $sequence = [uint32]0
@@ -64,10 +64,10 @@ try {
     while ($true) {
         $sequence = [uint32]($sequence + 1)
         $seconds = $t.Elapsed.TotalSeconds
-        # Fake guest circles 3 m near the actual reported Jimmy position.
+        # Flat-area test only: very slow 1.8m circle around actual Jimmy position.
         # No game injection here: pure UDP test coordinates.
-        $x = [single]($baseX + 3.0 * [Math]::Cos($seconds * 0.65))
-        $y = [single]($baseY + 3.0 * [Math]::Sin($seconds * 0.65))
+        $x = [single]($baseX + 1.8 * [Math]::Cos($seconds * 0.30))
+        $y = [single]($baseY + 1.8 * [Math]::Sin($seconds * 0.30))
         $z = [single]$baseZ
         $packet = Build-GuestPacket $sequence $x $y $z
         [void]$udp.Send($packet, $packet.Length)
@@ -81,7 +81,7 @@ try {
                     $baseY = [BitConverter]::ToSingle($response,20)
                     $baseZ = [BitConverter]::ToSingle($response,24)
                     if (-not $knownHost) {
-                        Write-Host 'HOST FOUND! Fake guest will circle near Jimmy.' -ForegroundColor Green
+                        Write-Host 'HOST FOUND! Testing small orbit near Jimmy; stay in an OPEN FLAT space.' -ForegroundColor Green
                         $knownHost = $true
                     }
                     if ($t.ElapsedMilliseconds - $lastPrint -ge 2000) {
