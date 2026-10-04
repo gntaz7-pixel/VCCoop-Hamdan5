@@ -1,37 +1,22 @@
-﻿مشروع Bully Co-op - Hamdan Edition
-نسخة v0.12: فحص هوية الشخصية الثانية - بدون أي حركة إجبارية
+﻿Bully Co-op - Hamdan Edition v0.13 (SOURCE ONLY)
 
-سبب النسخة:
-في آخر تجربة v0.11 ثبت اتصال الشبكة، لكن عند تشغيل F10 كان جيمي نفسه يهتز أو يقفز إلى مكان الشخصية الثانية، ثم يعود طبيعيًا عند إيقاف F10. الاحتمالات تشمل تداخل اصطدام الشخصيات أو مشاركة عنوان كائن/تحويل في محرك اللعبة. لم يثبت السبب النهائي بعد.
+NEW: ONE-SHOT PED WALK TASK - EXPERIMENTAL, UNTESTED IN GAME.
+Bully.exe exactly 8,204,288 bytes. Confirmed F9 spawn and v0.12 separate NPC actor pointers in previous test.
 
-الفرق المهم:
-F9 = تجربة إنشاء الشخصية الثانية مرة واحدة.
-F10 = عرض تقرير تشخيصي في اللوق فقط؛ لا يحرك جيمي ولا الشخصية الثانية.
-فحص v0.12 يقرأ عنوان جيمي وعنوان الشخصية الثانية، والمؤشرات الداخلية، وإحداثيات كل منهما، والمسافة بينهما. يمنع التشخيص تلقائيًا لو وجد عنوانًا مشتركًا.
+F9 - Create ONE NPC (once per game session).
+F10 - Submit ONE walking task to the NPC based on latest guest position. No teleport, no continuous forced movement. Each press is a single experiment, not on/off. May CRASH, FREEZE or affect Jimmy (unverified!).
+F11 - Toggle READ-ONLY actor pointer report (like v0.12).
 
-خطوات الاختبار:
-1. اقفل Bully. اشتغل على نسخة احتياطية من مجلد اللعبة فقط.
-2. ارفع ملفات ZIP إلى GitHub واستبدل ملفات الإصدار السابق.
-3. من Actions شغّل Build Bully Co-op READ-ONLY Identity v0.12 (x86) وحمّل dinput8.dll الناتج.
-4. احفظ DLL القديم ثم ضع DLL الجديد بجانب Bully.exe.
-5. تأكد من وجود BullyCoop.ini بجانب اللعبة بهذه الإعدادات:
+SAFETY: In BullyCoop.ini set EnableNPCWalkProbe=0 first, check Bully runs and F9 spawns. Only after backup, open flat ground and change EnableNPCWalkProbe=1. Do not save.
 
-[Network]
-Enabled=1
-Role=host
-Port=7791
-SessionCode=246813
-
+Network enabled: HOST local UDP 7791 SessionCode 246813.
 [Experimental]
 EnableNPCSpawnProbe=1
 EnableRemoteMovementProbe=1
+EnableNPCWalkProbe=1
 
-6. لا تحتاج تشغّل FAKE_GUEST في هذا الاختبار.
-7. افتح اللعبة في ساحة مفتوحة، واضغط F9 مرة واحدة لإنشاء الشخصية.
-8. اضغط F10 مرة واحدة لبدء قراءة الهوية، وحرّك جيمي بنفسك 5 إلى 10 ثوانٍ، ثم اضغط F10 لإيقاف الفحص.
-9. أرسل آخر جزء من BullyCoop_bridge.log الذي يبدأ بعبارة
-=== BullyCoop Hamdan v0.12 READ ONLY ID CHECK NEW SESSION ===
-وبالأخص رسائل ID POINTERS وID POS وDANGER إن ظهرت.
+Testing: Close all OLD FAKE_GUEST tools. Start Bully HOST and wait until in free-roam outdoor FLAT open ground. Start FAKE_GUEST_NEAR_JIMMY.cmd from v0.11 ZIP (SAFE 4.0m orbit), wait HOST FOUND. F9 once, ensure NPC starts separated. Press F10 ONCE, observe NPC and Jimmy. F10 again only if first walk task was safely completed and NPC is still away from Jimmy; there is NO stop button for engine task once issued. F11 toggle read-only logging. Stop immediately if Jimmy moves involuntarily. Send BullyCoop_bridge.log.
 
-مهم: حتى لو كانت العناوين منفصلة، قد يبقى سبب آخر مرتبطًا بالتصادم أو ذكاء الشخصية. لا ترجع إلى الحركة في v0.11 حاليًا، ولا تحفظ اللعبة أثناء التجربة.
-نسخة المصدر فقط، تحتاج بناء DLL عبر GitHub Actions ولم تُختبر داخل اللعبة بعد.
+Static inspection found PedMoveToXYZ script wrapper -> task allocator(0x5EEAA0), task constructor(0x4705B0), task attachment(0x471390), matching this Bully.exe. Task calling convention and suitability in injected DLL remain UNPROVEN. Runtime code verifies byte signatures and separate NPC transform.
+
+TEST ON A BACKUP ONLY. Not yet full co-op. Do not share on public untrusted network. Builds through GitHub Actions, Windows x86.
