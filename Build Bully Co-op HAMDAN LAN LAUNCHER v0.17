@@ -1,0 +1,50 @@
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'launcher/**'
+      - 'BUILD_LAUNCHER.cmd'
+      - 'BUILD_WINDOWS.cmd'
+      - 'bridge/**'
+      - 'tests/**'
+      - '.github/workflows/build-bully-launcher.yml'
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build unchanged stable v0.16b DLL and engine-independent safety tests
+        shell: cmd
+        run: call BUILD_WINDOWS.cmd
+      - name: Build launcher GUI for .NET Framework
+        shell: cmd
+        run: call BUILD_LAUNCHER.cmd
+      - name: Verify PE x86 DLL and Windows launcher
+        shell: pwsh
+        run: |
+          foreach ($f in @('out/dinput8.dll', 'out/BullyCoopLauncher.exe')) {
+            if (-not (Test-Path $f)) { throw "Missing $f" }
+            $b = [IO.File]::ReadAllBytes((Resolve-Path $f))
+            if ($b.Length -lt 512 -or [BitConverter]::ToUInt16($b,0) -ne 0x5A4D) { throw "Not PE: $f" }
+            $pe = [BitConverter]::ToInt32($b,0x3C)
+            if ($pe -lt 64 -or $pe -gt $b.Length - 24) { throw "Bad PE offset: $f" }
+            if ([BitConverter]::ToUInt32($b,$pe) -ne 0x4550) { throw "Bad PE signature: $f" }
+            if ([BitConverter]::ToUInt16($b,$pe+4) -ne 0x014c) { throw "Not x86: $f" }
+            Write-Host "PASS x86: $f"
+          }
+      - name: Prepare launcher artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path out/package | Out-Null
+          Copy-Item out/dinput8.dll,out/BullyCoopLauncher.exe,README_LAUNCHER_AR.txt -Destination out/package/
+          Compress-Archive -Path out/package/* -DestinationPath out/BullyCoop_Hamdan_Launcher_v017_Windows_x86.zip -Force
+      - name: Download the launcher and stable bridge
+        uses: actions/upload-artifact@v4
+        with:
+          name: BullyCoop-Hamdan-v017-LAN-Launcher-Windows
+          path: out/BullyCoop_Hamdan_Launcher_v017_Windows_x86.zip
+          if-no-files-found: error
