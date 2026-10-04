@@ -5,6 +5,8 @@
 #include <cmath>
 
 namespace BullySafeWalk {
+static constexpr float kLocalFollowMaxDistance=24.0f;
+
 struct XY { float x, y; };
 enum class Status { Move, Reached, Unsafe };
 struct Plan {
@@ -27,6 +29,21 @@ inline float segmentGap(XY start,XY end,XY center) {
     float vv=v.x*v.x+v.y*v.y;
     float t=vv>0.0001f ? clamp((w.x*v.x+w.y*v.y)/vv,0.0f,1.0f) : 0.0f;
     return length(sub(add(start,mul(v,t)),center));
+}
+// v0.16b SINGLE-PC safety window. When the host is paused in the background
+// its NPC cannot chase a guest running a whole district away. Pausing new tasks
+// is safer than commanding NPCs to cross unloaded geometry.
+inline bool localFollowInRange(XY npc, XY guest, XY jimmy) {
+    const float a=length(sub(npc,jimmy));
+    const float b=length(sub(guest,jimmy));
+    return std::isfinite(a) && std::isfinite(b) &&
+        a <= kLocalFollowMaxDistance && b <= kLocalFollowMaxDistance;
+}
+// A new task identical to the previous one, without observable NPC progress,
+// should not be spammed at every timer tick (can overflow/reject task stack).
+inline bool sameUnprogressedTask(XY npc,XY lastNpc,XY nextWaypoint,XY lastWaypoint) {
+    return length(sub(npc,lastNpc)) < 0.20f &&
+           length(sub(nextWaypoint,lastWaypoint)) < 0.90f;
 }
 inline Plan compute(XY npc, XY target, XY jimmy) {
     constexpr float kMaxTaskStep=5.8f;

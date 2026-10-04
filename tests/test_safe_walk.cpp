@@ -13,6 +13,12 @@ static bool verify(const char* name, XY npc,XY dest,XY jimmy,Status expected) {
 }
 int main() {
     int failed=0;
+    if (!localFollowInRange({5,1},{22,0},{0,0})) { std::printf("FAIL: local near positions rejected\n"); ++failed; }
+    if (localFollowInRange({5,1},{70,0},{0,0})) { std::printf("FAIL: far guest not blocked\n"); ++failed; }
+    if (localFollowInRange({27,0},{9,0},{0,0})) { std::printf("FAIL: far NPC not blocked\n"); ++failed; }
+    if (!sameUnprogressedTask({5.1f,0},{5,0},{11.2f,0},{11,0})) { std::printf("FAIL: unchanged task not held\n"); ++failed; }
+    if (sameUnprogressedTask({5.8f,0},{5,0},{11,0},{11,0})) { std::printf("FAIL: progressed NPC incorrectly held\n"); ++failed; }
+    if (sameUnprogressedTask({5,0},{5,0},{16,0},{11,0})) { std::printf("FAIL: new waypoint incorrectly held\n"); ++failed; }
     // No limit-8 deadlock when guest is far from the NPC and path is clear.
     if (!verify("far direct hop",{0,10},{30,10},{0,0},Status::Move)) ++failed;
     // Opposite sides of Jimmy. Never walk THROUGH Jimmy, even if guest is far.
