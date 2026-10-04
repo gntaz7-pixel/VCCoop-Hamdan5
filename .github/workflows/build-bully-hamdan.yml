@@ -1,0 +1,39 @@
+name: Build Bully Co-op Bridge Probe (x86)
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'bridge/**'
+      - 'BUILD_WINDOWS.cmd'
+      - '.github/workflows/build-bully-bridge.yml'
+jobs:
+  win32-bridge:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+      - name: Compile 32-bit dinput8.dll probe
+        shell: cmd
+        run: BUILD_WINDOWS.cmd
+      - name: Validate PE format
+        shell: pwsh
+        run: |
+          $path = 'out/dinput8.dll'
+          if (-not (Test-Path $path)) { throw 'Missing output DLL' }
+          $s = [IO.File]::OpenRead($path)
+          try {
+            $r = [IO.BinaryReader]::new($s)
+            if ($r.ReadUInt16() -ne 0x5A4D) { throw 'Not an MZ executable' }
+            $s.Position = 0x3C
+            $offset = $r.ReadInt32()
+            $s.Position = $offset
+            if ($r.ReadUInt32() -ne 0x00004550) { throw 'Not a PE binary' }
+            if ($r.ReadUInt16() -ne 0x014C) { throw 'DLL is not Win32/x86' }
+          } finally { $s.Dispose() }
+          Write-Host 'PASS: dinput8.dll is PE32 x86'
+      - name: Downloadable DLL probe
+        uses: actions/upload-artifact@v4
+        with:
+          name: BullyCoop-Hamdan-Bridge-Probe-x86
+          path: out/dinput8.dll
+          if-no-files-found: error
