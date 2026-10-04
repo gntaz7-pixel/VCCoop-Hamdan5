@@ -48,8 +48,8 @@ try {
     $udp.Connect($hostIP, $hostPort)
     $udp.Client.ReceiveTimeout = 150
     $sender = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Any, 0)
-    Write-Host 'FAKE GUEST v0.10 -> SLOW 3.6m orbit; keep space from Jimmy; FLAT GROUND ONLY' -ForegroundColor Cyan
-    Write-Host 'Start Bully.exe configured as HOST and walk in the game.'
+    Write-Host 'FAKE GUEST v0.11 -> SAFE 4.0m orbit; FLAT GROUND ONLY; run ONE fake client' -ForegroundColor Cyan
+    Write-Host 'Start Bully.exe as HOST FIRST. Close OTHER FAKE GUEST windows (host accepts one sender).'
     Write-Host 'Waiting for HOST replies; press Ctrl+C to stop.'
     $sequence = [uint32]0
     $t = [System.Diagnostics.Stopwatch]::StartNew()
@@ -64,10 +64,10 @@ try {
     while ($true) {
         $sequence = [uint32]($sequence + 1)
         $seconds = $t.Elapsed.TotalSeconds
-        # Flat-area test only: 3.6m radius (outside Jimmy collision zone), slow circle.
+        # Flat-area test only: 4.0m radius (outside Jimmy collision zone), slow circle.
         # No game injection here: pure UDP test coordinates.
-        $x = [single]($baseX + 3.6 * [Math]::Cos($seconds * 0.18))
-        $y = [single]($baseY + 3.6 * [Math]::Sin($seconds * 0.18))
+        $x = [single]($baseX + 4.0 * [Math]::Cos($seconds * 0.18))
+        $y = [single]($baseY + 4.0 * [Math]::Sin($seconds * 0.18))
         $z = [single]$baseZ
         $packet = Build-GuestPacket $sequence $x $y $z
         [void]$udp.Send($packet, $packet.Length)
@@ -81,7 +81,7 @@ try {
                     $baseY = [BitConverter]::ToSingle($response,20)
                     $baseZ = [BitConverter]::ToSingle($response,24)
                     if (-not $knownHost) {
-                        Write-Host 'HOST FOUND! Testing small orbit near Jimmy; stay in an OPEN FLAT space.' -ForegroundColor Green
+                        Write-Host 'HOST FOUND! Safe orbit active. Stay in an OPEN FLAT space.' -ForegroundColor Green
                         $knownHost = $true
                     }
                     if ($t.ElapsedMilliseconds - $lastPrint -ge 2000) {
@@ -95,7 +95,7 @@ try {
             } catch [System.Net.Sockets.SocketException] { }
         }
         if ($received -eq 0 -and $t.ElapsedMilliseconds - $lastWarn -ge 7000) {
-            Write-Host ("Waiting for game... sent {0} packets; ensure Bully is in gameplay and Role=host" -f $sent) -ForegroundColor Yellow
+            Write-Host ("Waiting for HOST reply... sent {0}; close other FAKE GUEST windows; start Bully as host" -f $sent) -ForegroundColor Yellow
             $lastWarn = $t.ElapsedMilliseconds
         }
         [System.Threading.Thread]::Sleep(100)

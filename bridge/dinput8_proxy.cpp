@@ -1,5 +1,5 @@
-// Bully Co-op Hamdan | SAFE NPC movement and anti-sticking experiment v0.10 | Bully: Scholarship Edition (user-provided build only).
-// EXPERIMENT v0.10: flat-ground limited XY steps + keep-out circle near Jimmy; never copy network Z.
+// Bully Co-op Hamdan | SAFE NPC movement and anti-sticking experiment v0.11 | Bully: Scholarship Edition (user-provided build only).
+// EXPERIMENT v0.11: flat-ground limited XY steps + keep-out circle near Jimmy; never copy network Z.
 // This is NOT a verified co-op mod. Never test in your only game installation.
 // This DLL is a DirectInput 8 proxy: it forwards actual input calls to the system DLL.
 #define WIN32_LEAN_AND_MEAN
@@ -477,13 +477,14 @@ static std::atomic<bool> g_movePostPending{false};
 static const float kMaxTargetFromJimmy = 6.0f; // avoid off-screen / far-away teleports
 // Prevent scripted position steps into Jimmy's collision/interaction radius.
 // These are TEST heuristics, not a collision engine or walk-path solution.
-static const float kMinGuestDistanceFromJimmy = 2.80f;
+static const float kMinGuestDistanceFromJimmy = 3.20f;
 static const float kMinNpcDistanceFromJimmy = 2.35f;
+static const float kNpcRecoveryDistanceFromJimmy = 2.65f; // wider than hard keep-out to avoid deadlock
 static const float kMaxNpcFromJimmy = 10.0f;
 static const float kMaxRemoteDzFromSpawn = 0.65f; // FLAT GROUND only
 static const float kMaxNpcDzFromSpawn = 0.90f;
 static const float kMaxHorizontalStepPerCall = 0.12f; // <=0.8m/s at 150ms
-static const float kMaxTargetFromNpc = 5.0f; // must not chase/teleport across distant geometry
+static const float kMaxTargetFromNpc = 8.20f; // must not chase/teleport across distant geometry
 // Only the UDP thread writes this mailbox. Window thread reads a snapshot.
 static SRWLOCK g_remoteLock = SRWLOCK_INIT;
 static Position g_remoteSnapshot = {};
@@ -538,7 +539,7 @@ static void RunNpcMovementExperiment() {
     ReleaseSRWLockShared(&g_remoteLock);
     if (!haveRemote || tick - lastReceived > 450 || !ValidNetworkPosition(remote)) {
         if (tick - g_lastMoveSkipLog >= 4000) {
-            WriteProbeLog("BullyCoop v0.10: STOPPED updating: stale/invalid remote position\r\n");
+            WriteProbeLog("BullyCoop v0.11: STOPPED updating: stale/invalid remote position\r\n");
             g_lastMoveSkipLog = tick;
         }
         return;
@@ -550,7 +551,7 @@ static void RunNpcMovementExperiment() {
         std::fabs(jimmy.z - g_npcSpawnAnchor.z) > kMaxRemoteDzFromSpawn) {
         // Never copy wild under-ground/stair/roof Z levels into NPC's location.
         if (tick - g_lastMoveSkipLog >= 4000) {
-            WriteProbeLog("BullyCoop v0.10: move SKIPPED: Z changed; FLAT GROUND ONLY\r\n");
+            WriteProbeLog("BullyCoop v0.11: move SKIPPED: Z changed; FLAT GROUND ONLY\r\n");
             g_lastMoveSkipLog = tick;
         }
         return;
@@ -558,19 +559,27 @@ static void RunNpcMovementExperiment() {
     const float rx = remote.x - jimmy.x;
     const float ry = remote.y - jimmy.y;
     const float remoteDistance2 = rx*rx + ry*ry;
-    if (remoteDistance2 < kMinGuestDistanceFromJimmy*kMinGuestDistanceFromJimmy) {
+    if (remoteDistance2 > kMaxTargetFromJimmy*kMaxTargetFromJimmy) {
         if (tick - g_lastMoveSkipLog >= 4000) {
-            WriteProbeLog("BullyCoop v0.10: movement SKIPPED: guest too close to Jimmy (anti-stick)\r\n");
+            WriteProbeLog("BullyCoop v0.11: move SKIPPED: guest >6m from Jimmy\r\n");
             g_lastMoveSkipLog = tick;
         }
         return;
     }
-    if (remoteDistance2 > kMaxTargetFromJimmy*kMaxTargetFromJimmy) {
+    // v0.10 incorrectly discarded EVERY target inside Jimmy's 2.8-unit radius.
+    // A standing or moving Jimmy could therefore freeze the test ped indefinitely.
+    // Use a temporary safe representation outside Jimmy's collision area instead.
+    Position safeGoal = remote;
+    if (remoteDistance2 < kMinGuestDistanceFromJimmy*kMinGuestDistanceFromJimmy) {
+        const float distance = std::sqrt(remoteDistance2);
+        const float dirX = distance > 0.001f ? rx/distance : 1.0f;
+        const float dirY = distance > 0.001f ? ry/distance : 0.0f;
+        safeGoal.x = jimmy.x + dirX*kMinGuestDistanceFromJimmy;
+        safeGoal.y = jimmy.y + dirY*kMinGuestDistanceFromJimmy;
         if (tick - g_lastMoveSkipLog >= 4000) {
-            WriteProbeLog("BullyCoop v0.10: move SKIPPED: guest >6m from Jimmy\r\n");
+            WriteProbeLog("BullyCoop v0.11: target TOO CLOSE; projecting away from Jimmy (not stopping)\r\n");
             g_lastMoveSkipLog = tick;
         }
-        return;
     }
     typedef void* (__cdecl* LookupPedFn)(int handle, int actorType);
     typedef void (__cdecl* SetActorPositionFn)(void* actor, const Position* xyz);
@@ -590,20 +599,29 @@ static void RunNpcMovementExperiment() {
             } else {
                 const float npcFromJimmyX = current.x - jimmy.x;
                 const float npcFromJimmyY = current.y - jimmy.y;
-                const float dX = remote.x - current.x;
-                const float dY = remote.y - current.y;
-                const float d2 = dX*dX + dY*dY;
                 const float npcDistance2 = npcFromJimmyX*npcFromJimmyX + npcFromJimmyY*npcFromJimmyY;
-                if (npcDistance2 < kMinNpcDistanceFromJimmy*kMinNpcDistanceFromJimmy) {
-                    // Stop forcing the NPC into the player; let Jimmy walk away.
-                    // Never automatically teleport the NPC out of a collision.
+                const float dX = safeGoal.x - current.x;
+                const float dY = safeGoal.y - current.y;
+                const float d2 = dX*dX + dY*dY;
+                if (npcDistance2 > kMaxNpcFromJimmy*kMaxNpcFromJimmy) {
+                    tooFar = true;
+                } else if (npcDistance2 < kNpcRecoveryDistanceFromJimmy*kNpcRecoveryDistanceFromJimmy) {
+                    // RECOVERY: move the already-overlapping ped *away* in tiny XY steps.
+                    // v0.10 only froze it in place and could leave Jimmy trapped.
+                    const float r = std::sqrt(npcDistance2);
+                    const float unitX = r > 0.001f ? npcFromJimmyX/r : 1.0f;
+                    const float unitY = r > 0.001f ? npcFromJimmyY/r : 0.0f;
+                    stepped.x = current.x + unitX*kMaxHorizontalStepPerCall;
+                    stepped.y = current.y + unitY*kMaxHorizontalStepPerCall;
+                    stepped.z = current.z;
+                    setPosition(npc, &stepped);
+                    applied = true;
+                    g_lastNpcMoveTick = tick;
                     if (tick - g_lastMoveSkipLog >= 4000) {
-                        WriteProbeLog("BullyCoop v0.10: movement SKIPPED: Jimmy too close to NPC; walk away\r\n");
+                        WriteProbeLog("BullyCoop v0.11: NPC TOO CLOSE; recovery step AWAY from Jimmy\r\n");
                         g_lastMoveSkipLog = tick;
                     }
-                } else if (npcFromJimmyX*npcFromJimmyX + npcFromJimmyY*npcFromJimmyY >
-                     kMaxNpcFromJimmy*kMaxNpcFromJimmy ||
-                    d2 > kMaxTargetFromNpc*kMaxTargetFromNpc) {
+                } else if (d2 > kMaxTargetFromNpc*kMaxTargetFromNpc) {
                     tooFar = true;
                 } else if (d2 > 0.025f * 0.025f) {
                     const float d = std::sqrt(d2);
@@ -611,44 +629,53 @@ static void RunNpcMovementExperiment() {
                         kMaxHorizontalStepPerCall / d : 1.0f;
                     stepped.x = current.x + dX * frac;
                     stepped.y = current.y + dY * frac;
-                    stepped.z = current.z; // CRITICAL: retain actor's own Z; never remote Z
+                    stepped.z = current.z; // never copy received Z
                     const float stepFromJimmyX = stepped.x - jimmy.x;
                     const float stepFromJimmyY = stepped.y - jimmy.y;
                     if (stepFromJimmyX*stepFromJimmyX + stepFromJimmyY*stepFromJimmyY <
                         kMinNpcDistanceFromJimmy*kMinNpcDistanceFromJimmy) {
-                        // A step can cross the keep-out boundary even if its goal is safe.
+                        // Go around Jimmy rather than stepping through their collision.
+                        // Tangent is perpendicular to the radial line and uses the
+                        // sign which brings the NPC closer to the safe goal.
+                        const float r = std::sqrt(npcDistance2);
+                        const float tangentX = -npcFromJimmyY/r;
+                        const float tangentY = npcFromJimmyX/r;
+                        const float sign = (dX*tangentX + dY*tangentY >= 0.0f) ? 1.0f : -1.0f;
+                        stepped.x = current.x + sign*tangentX*kMaxHorizontalStepPerCall;
+                        stepped.y = current.y + sign*tangentY*kMaxHorizontalStepPerCall;
+                        stepped.z = current.z;
                         if (tick - g_lastMoveSkipLog >= 4000) {
-                            WriteProbeLog("BullyCoop v0.10: movement SKIPPED: next step overlaps Jimmy\r\n");
+                            WriteProbeLog("BullyCoop v0.11: path near Jimmy; tiny sideways step\r\n");
                             g_lastMoveSkipLog = tick;
                         }
-                    } else {
-                        setPosition(npc, &stepped);
-                        applied = true;
-                        g_lastNpcMoveTick = tick;
                     }
+                    // All experimental engine calls stay on the game's window thread.
+                    setPosition(npc, &stepped);
+                    applied = true;
+                    g_lastNpcMoveTick = tick;
                 }
             }
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         g_followEnabled.store(false);
-        WriteProbeLog("BullyCoop v0.10: NPC position call raised Windows exception; AUTO-DISABLED\r\n");
+        WriteProbeLog("BullyCoop v0.11: NPC position call raised Windows exception; AUTO-DISABLED\r\n");
         return;
     }
     if (missingPed || outOfRange) {
         g_followEnabled.store(false);
         if (missingPed) g_npcHandle.store(-1);
         WriteProbeLog(missingPed ?
-            "BullyCoop v0.10: NPC handle disappeared; AUTO-DISABLED; restart to respawn\r\n" :
-            "BullyCoop v0.10: NPC position/Z unsafe; AUTO-DISABLED\r\n");
+            "BullyCoop v0.11: NPC handle disappeared; AUTO-DISABLED; restart to respawn\r\n" :
+            "BullyCoop v0.11: NPC position/Z unsafe; AUTO-DISABLED\r\n");
     } else if (tooFar) {
         if (tick - g_lastMoveSkipLog >= 4000) {
-            WriteProbeLog("BullyCoop v0.10: movement SKIPPED: NPC too far from target; no teleport\r\n");
+            WriteProbeLog("BullyCoop v0.11: movement SKIPPED: NPC too far from target; no teleport\r\n");
             g_lastMoveSkipLog = tick;
         }
     } else if (applied && (g_lastFollowLog == 0 || tick - g_lastFollowLog >= 2500)) {
         char msg[200] = {};
         sprintf_s(msg, sizeof(msg),
-            "BullyCoop v0.10: NPC STEP handle=%d x=%.2f y=%.2f z=%.2f age_ms=%lu\r\n",
+            "BullyCoop v0.11: NPC STEP handle=%d x=%.2f y=%.2f z=%.2f age_ms=%lu\r\n",
             handle, stepped.x, stepped.y, stepped.z, static_cast<unsigned long>(tick-lastReceived));
         WriteProbeLog(msg);
         g_lastFollowLog = tick;
@@ -675,7 +702,7 @@ static void RunNpcSpawnExperiment() {
     int returnedHandle = -1;
     __try {
         returnedHandle = create(nullptr, static_cast<int>(kModelForProbe),
-                                player.x + 3.75f, player.y, player.z + 0.20f, 0.0f, 1);
+                                player.x + 3.25f, player.y, player.z + 0.20f, 0.0f, 1);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         WriteProbeLog("BullyCoop v0.7: NPC spawn raised Windows exception; no retry\r\n");
         return;
@@ -691,7 +718,7 @@ static void RunNpcSpawnExperiment() {
         g_npcSpawnAnchorValid = true;
         g_lastNpcMoveTick = 0;
         if (g_movementProbeAllowed) {
-            WriteProbeLog("BullyCoop v0.10: NPC spawned; press F10 to toggle SAFE XY steps\r\n");
+            WriteProbeLog("BullyCoop v0.11: NPC spawned; press F10 to toggle SAFE XY steps\r\n");
         }
     }
 }
@@ -736,22 +763,22 @@ static bool InstallNpcTestWindowHook() {
     if (!wnd) return false;
     const DWORD windowThread = GetWindowThreadProcessId(wnd, nullptr);
     if (!windowThread) return false;
-    const UINT message = RegisterWindowMessageA("BullyCoop_Hamdan_NPC_AntiStick_v10");
+    const UINT message = RegisterWindowMessageA("BullyCoop_Hamdan_NPC_AntiStall_v11");
     if (!message) return false;
     HHOOK hook = SetWindowsHookExA(WH_GETMESSAGE, NpcTestMessageHook, nullptr, windowThread);
     if (!hook) return false;
     g_spawnMessage = message;
     g_gameWindow = wnd;
     g_gameMessageHook = hook;
-    WriteProbeLog("BullyCoop v0.10: NPC test armed; press F9 once INSIDE the game\r\n");
+    WriteProbeLog("BullyCoop v0.11: NPC test armed; press F9 once INSIDE the game\r\n");
     return true;
 }
 
 static DWORD WINAPI PositionThread(LPVOID parameter) {
     const uintptr_t base = reinterpret_cast<uintptr_t>(parameter);
     if (!VersionMatches(base)) return 0;
-    WriteProbeLog("\r\n=== BullyCoop Hamdan v0.10 NEW SESSION ===\r\n");
-    WriteProbeLog("BullyCoop position v0.10: network + opt-in NPC spawn/SAFE movement probe\r\n");
+    WriteProbeLog("\r\n=== BullyCoop Hamdan v0.11 NEW SESSION ===\r\n");
+    WriteProbeLog("BullyCoop position v0.11: network + opt-in NPC spawn/SAFE movement probe\r\n");
     NetworkProbe network = {};
     const bool networkEnabled = InitNetwork(&network);
     char probeIni[MAX_PATH] = {};
@@ -769,11 +796,11 @@ static DWORD WINAPI PositionThread(LPVOID parameter) {
     if (g_movementProbeAllowed) {
         g_movementNativeVerified = ValidatePedMovementFunction(base);
         WriteProbeLog(g_movementNativeVerified ?
-            "BullyCoop v0.10: SAFE movement signatures VERIFIED; press F9 then F10 (flat area only)\r\n" :
-            "BullyCoop v0.10: movement native signature mismatch; MOVEMENT BLOCKED\r\n");
+            "BullyCoop v0.11: SAFE movement signatures VERIFIED; press F9 then F10 (flat area only)\r\n" :
+            "BullyCoop v0.11: movement native signature mismatch; MOVEMENT BLOCKED\r\n");
         if (!g_movementNativeVerified) g_movementProbeAllowed = false;
     } else {
-        WriteProbeLog("BullyCoop v0.10: movement DISABLED (safe default)\r\n");
+        WriteProbeLog("BullyCoop v0.11: movement DISABLED (safe default)\r\n");
     }
     bool previouslyAvailable = false;
     Position previous = {};
@@ -834,8 +861,8 @@ static DWORD WINAPI PositionThread(LPVOID parameter) {
             g_followEnabled.store(turnOn);
             if (turnOn) g_lastNpcMoveTick = 0;
             WriteProbeLog(turnOn ?
-                "BullyCoop v0.10: F10 -> SAFE NPC movement ENABLED\r\n" :
-                "BullyCoop v0.10: F10 -> SAFE NPC movement STOPPED\r\n");
+                "BullyCoop v0.11: F10 -> SAFE NPC movement ENABLED\r\n" :
+                "BullyCoop v0.11: F10 -> SAFE NPC movement STOPPED\r\n");
         }
         f10PreviouslyDown = f10Down;
         if (networkEnabled) {

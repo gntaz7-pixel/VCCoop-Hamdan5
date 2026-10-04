@@ -1,27 +1,25 @@
-Bully Co-op Hamdan v0.10 - Anti-Stick / Separation Test (SOURCE ONLY)
-================================================================
-What Hamdan confirmed: v0.7 NPC appears. v0.9 NPC motion is smooth, but with F10 active it sticks/pushes against Jimmy. F10 OFF stops the forced movement. v0.10 has NOT been compiled/tested in game yet.
+Bully Co-op Hamdan v0.11 - NPC Anti-Stall Recovery Experiment (SOURCE ONLY)
+==================================================================
+WHY v0.10 FROZE:
+- User confirmed: F9 NPC did appear, F10 only toggled movement in the log.
+- v0.10 logged repeated "guest too close to Jimmy" and refused ALL motion.
+- The scripted fake guest can approach Jimmy if Jimmy walks toward it.
+- A stationary test NPC can physically obstruct Jimmy.
 
-Likely cause:
-- v0.9 fake guest orbit radius was 1.8 game units, INSIDE safe separation distance from Jimmy.
-- v0.9 NPC started at +2.5 units, then F10 pulled it toward a guest goal only 1.8 units from Jimmy.
-- Repeated position writes can fight player/NPC collision response.
+CHANGES:
+1. Small recovery step AWAY from Jimmy if the NPC is already within 2.65 game units.
+2. When guest target is too close, project the target outward to a 3.20 unit safe radius, rather than freezing.
+3. Tiny sideways step when the direct step would enter the 2.35 unit keep-out circle.
+4. Fake guest test orbit is 4.0 units from the last reported Jimmy coordinate.
+5. Test spawn is at Jimmy.x+3.25. F9 still spawns ONCE per game session; F10 only toggles movement.
+6. v0.9 safeguards kept: read NPC's own Z, no copying network Z, max 0.12 XY step/135ms, stale packet refusal, script calls on game window thread. Engine pathfinding and wall collision still NOT implemented.
 
-Changes in v0.10:
-- Fake guest orbit radius 3.6 units, slow angular speed 0.18 rad/s.
-- NPC spawns at Jimmy.x + 3.75 instead of 2.5, leaving more space.
-- Do not process a guest target within 2.80 units of Jimmy.
-- Do not move an NPC within 2.35 units of Jimmy; Jimmy can step away so movement resumes.
-- Reject a proposed XY step that would get the NPC closer than 2.35 units to Jimmy.
-- Preserve v0.9 limitations: flat ground Z checks, small 0.12 XY steps, stale-packet and bad-handle checks.
-- F9 NPC spawn; F10 toggles movement ON/OFF; F10 OFF is an immediate escape if interaction glitches.
-
-Build:
-1) Backup existing Bully.exe folder / saves and working dinput8.dll.
-2) Upload ZIP contents to your GitHub repo, replacing the older bridge source, BUILD_WINDOWS.cmd and .github/workflows/build-bully-position.yml.
-3) Actions -> Build Bully Co-op Anti-Stick NPC Movement v0.10 (x86).
-4) Download artifact and put the new out/dinput8.dll next to Bully.exe in a SEPARATE test copy.
-5) Settings in BullyCoop.ini:
+HOW TO BUILD:
+1. Backup the known-good v0.9 DLL and your Bully test folder; DO NOT change main install.
+2. Upload all ZIP files to the root of the GitHub project, preserving folders.
+3. GitHub Actions -> Build Bully Co-op Anti-Stall NPC Movement v0.11 (x86).
+4. Download artifact out/dinput8.dll, put next to Bully.exe in a separate TEST copy.
+5. BullyCoop.ini:
 [Network]
 Enabled=1
 Role=host
@@ -32,9 +30,11 @@ SessionCode=246813
 EnableNPCSpawnProbe=1
 EnableRemoteMovementProbe=1
 
-6) Run FAKE_GUEST_NEAR_JIMMY.cmd FROM THIS v0.10 ZIP, then Bully once in free roam; use OPEN, FLAT ground.
-7) Press F9 once; press F10 once to enable motion; move Jimmy gently, away from NPC.
-8) Verify the NPC no longer hugs/pushes Jimmy; try F10 OFF then ON separately to compare.
-9) If any clipping/crash, STOP, do not save and send the fresh BullyCoop_bridge.log.
+6. CLOSE all old fake-guest CMD windows (Ctrl+C). ONLY ONE can be connected at once.
+7. START Bully.exe as HOST FIRST; enter gameplay on flat open ground.
+8. Launch FAKE_GUEST_NEAR_JIMMY.cmd from THIS ZIP; wait for green HOST FOUND.
+9. PRESS F9 ONCE, TURN CAMERA to see NPC beside Jimmy (3.25 units along X), then F10 ONCE.
+10. Report actual NPC behavior and upload fresh bridge log. F10 again disables experimental movement.
 
-CAVEATS: still position stepping, not engine pathfinding, animation or verified two-machine co-op. Will NOT guarantee no wall clipping or physics glitches, especially on slopes or tight spaces. If NPC gets closer than safety distance, motion will freeze until Jimmy moves away. F10 disables movement but does not remove NPC from game.
+NOTE: This is a direct-coordinate MOVE PROBE, NOT walk animations, NOT pathfinding, NOT verified co-op.
+If Jimmy/NPC sticks, do NOT save game, turn F10 OFF, then quit; restore v0.9 DLL if needed.
