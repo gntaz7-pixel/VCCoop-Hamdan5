@@ -1,5 +1,5 @@
-// Bully Co-op Hamdan | NPC spawn experiment v0.7 | Bully: Scholarship Edition (user-provided build only).
-// EXPERIMENT: read-only UDP until operator explicitly enables NPC spawn AND presses F9.
+// Bully Co-op Hamdan | NPC movement experiment v0.8 | Bully: Scholarship Edition (user-provided build only).
+// EXPERIMENT: network positions remain read-only unless operator separately opts in to F9 SPAWN and F10 MOVE.
 // This is NOT a verified co-op mod. Never test in your only game installation.
 // This DLL is a DirectInput 8 proxy: it forwards actual input calls to the system DLL.
 #define WIN32_LEAN_AND_MEAN
@@ -36,6 +36,21 @@ static const uintptr_t kPedCreateNameRva = 0x528810;       // VA 0x00928810
 static const uintptr_t kPedCreateWrapperVa = 0x005CFCB0;
 static const unsigned char kPedCreateCodeSignature[] = {
     0x8B, 0x0D, 0x08, 0xC1, 0xC2, 0x00, 0x83, 0xEC, 0x10
+};
+// Confirmed by offline disassembly of the same user-provided Bully.exe:
+// PedSetPosXYZ script wrapper at 0x005C83B0 -> ped lookup(2,handle) at
+// 0x005C7380 -> scene position helper at 0x005C7600(ped,&vec3).
+// Invoke ONLY on the game's window/message thread, never the UDP thread.
+static const uintptr_t kPedSetPosRegistryRva = 0x6EA6E8;
+static const uintptr_t kPedSetPosNameRva = 0x5286A8;
+static const uintptr_t kPedSetPosWrapperVa = 0x005C83B0;
+static const uintptr_t kPedLookupRva = 0x1C7380;
+static const uintptr_t kPedSetPosLowLevelRva = 0x1C7600;
+static const unsigned char kPedLookupCodeSignature[] = {
+    0x57, 0x8B, 0x7C, 0x24, 0x08, 0x83, 0xFF, 0xFF, 0x75, 0x04, 0x33, 0xC0, 0x5F, 0xC3
+};
+static const unsigned char kPedSetPosCodeSignature[] = {
+    0x83, 0xEC, 0x0C, 0x56, 0x8B, 0x74, 0x24, 0x14, 0x85, 0xF6, 0x57
 };
 
 
@@ -102,6 +117,22 @@ static bool ValidatePedCreationFunction(uintptr_t base) {
            entry.address == kPedCreateWrapperVa &&
            std::memcmp(code, kPedCreateCodeSignature, sizeof(code)) == 0 &&
            std::strcmp(name, "PedCreateXYZ") == 0;
+}
+
+static bool ValidatePedMovementFunction(uintptr_t base) {
+    struct NativeEntry { uint32_t name; uint32_t address; } entry = {};
+    unsigned char lookup[sizeof(kPedLookupCodeSignature)] = {};
+    unsigned char setPos[sizeof(kPedSetPosCodeSignature)] = {};
+    char name[13] = {};
+    if (!ReadAt(base + kPedSetPosRegistryRva, &entry) ||
+        !ReadAt(base + kPedSetPosNameRva, &name) ||
+        !ReadAt(base + kPedLookupRva, &lookup) ||
+        !ReadAt(base + kPedSetPosLowLevelRva, &setPos)) return false;
+    return entry.name == base + kPedSetPosNameRva &&
+           entry.address == kPedSetPosWrapperVa &&
+           std::strcmp(name, "PedSetPosXYZ") == 0 &&
+           std::memcmp(lookup, kPedLookupCodeSignature, sizeof(lookup)) == 0 &&
+           std::memcmp(setPos, kPedSetPosCodeSignature, sizeof(setPos)) == 0;
 }
 
 static bool VersionMatches(uintptr_t base) {
@@ -431,6 +462,94 @@ static std::atomic<bool> g_spawnAttempted{false};
 static HHOOK g_gameMessageHook = nullptr;
 static HWND g_gameWindow = nullptr;
 static UINT g_spawnMessage = 0;
+static std::atomic<int> g_npcHandle{-1};
+static std::atomic<bool> g_followEnabled{false};
+static bool g_movementProbeAllowed = false;
+static bool g_movementNativeVerified = false;
+static DWORD g_lastFollowLog = 0;
+static DWORD g_lastMoveSkipLog = 0;
+// Only the UDP thread writes this mailbox. Window thread reads a snapshot.
+static SRWLOCK g_remoteLock = SRWLOCK_INIT;
+static Position g_remoteSnapshot = {};
+static DWORD g_remoteSnapshotTick = 0;
+static bool g_remoteSnapshotValid = false;
+
+static void PublishRemoteSnapshot(const NetworkProbe& network) {
+    AcquireSRWLockExclusive(&g_remoteLock);
+    g_remoteSnapshot = network.remote;
+    g_remoteSnapshotTick = network.lastReceived;
+    g_remoteSnapshotValid = network.haveRemote;
+    ReleaseSRWLockExclusive(&g_remoteLock);
+}
+
+static void RunNpcMovementExperiment() {
+    if (!g_followEnabled.load() || !g_movementProbeAllowed || !g_movementNativeVerified) return;
+    const int handle = g_npcHandle.load();
+    if (handle <= 0) return;
+    const DWORD tick = GetTickCount();
+    Position remote = {};
+    DWORD lastReceived = 0;
+    bool haveRemote = false;
+    AcquireSRWLockShared(&g_remoteLock);
+    remote = g_remoteSnapshot;
+    lastReceived = g_remoteSnapshotTick;
+    haveRemote = g_remoteSnapshotValid;
+    ReleaseSRWLockShared(&g_remoteLock);
+    if (!haveRemote || tick - lastReceived > 1200 || !ValidNetworkPosition(remote)) {
+        if (tick - g_lastMoveSkipLog >= 5000) {
+            WriteProbeLog("BullyCoop v0.8: NPC move waiting for FRESH remote position\r\n");
+            g_lastMoveSkipLog = tick;
+        }
+        return;
+    }
+    const uintptr_t base = reinterpret_cast<uintptr_t>(GetModuleHandleA(nullptr));
+    Position jimmy = {};
+    if (ReadJimmyPosition(base, &jimmy) != PositionStatus::Good) return;
+    // Safety/streaming guard: this is a nearby-only experiment; full world
+    // streaming and areas/missions are NOT synchronized yet.
+    const float dx = remote.x - jimmy.x;
+    const float dy = remote.y - jimmy.y;
+    const float dz = remote.z - jimmy.z;
+    if (dx * dx + dy * dy + dz * dz > 40.0f * 40.0f) {
+        if (tick - g_lastMoveSkipLog >= 5000) {
+            WriteProbeLog("BullyCoop v0.8: remote player >40m away; movement skipped for test safety\r\n");
+            g_lastMoveSkipLog = tick;
+        }
+        return;
+    }
+    // Names inferred from PedSetPosXYZ native wrapper, not public Bully SDK.
+    typedef void* (__cdecl* LookupPedFn)(int handle, int actorType);
+    typedef void (__cdecl* SetActorPositionFn)(void* actor, const Position* xyz);
+    LookupPedFn lookup = reinterpret_cast<LookupPedFn>(base + kPedLookupRva);
+    SetActorPositionFn setPosition = reinterpret_cast<SetActorPositionFn>(base + kPedSetPosLowLevelRva);
+    bool applied = false;
+    bool missingPed = false;
+    __try {
+        void* npc = lookup(handle, 2); // type=2: ped, never type=3 (Jimmy)
+        if (npc) {
+            setPosition(npc, &remote);
+            applied = true;
+        } else {
+            missingPed = true;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        g_followEnabled.store(false);
+        WriteProbeLog("BullyCoop v0.8: movement raised Windows exception; AUTO-DISABLED\r\n");
+        return;
+    }
+    if (missingPed) {
+        g_followEnabled.store(false);
+        WriteProbeLog("BullyCoop v0.8: NPC handle no longer exists; AUTO-DISABLED\r\n");
+    } else if (applied && (g_lastFollowLog == 0 || tick - g_lastFollowLog >= 2500)) {
+        char msg[200] = {};
+        sprintf_s(msg, sizeof(msg),
+                  "BullyCoop v0.8: NPC MOVED handle=%d x=%.2f y=%.2f z=%.2f age_ms=%lu\r\n",
+                  handle, remote.x, remote.y, remote.z,
+                  static_cast<unsigned long>(tick - lastReceived));
+        WriteProbeLog(msg);
+        g_lastFollowLog = tick;
+    }
+}
 
 static void RunNpcSpawnExperiment() {
     if (g_spawnAttempted.exchange(true)) return;
@@ -462,6 +581,12 @@ static void RunNpcSpawnExperiment() {
         "BullyCoop v0.7: NPC spawn CALL RETURNED handle=%d; verify VISUALLY (not yet proven)\r\n",
         returnedHandle);
     WriteProbeLog(msg);
+    if (returnedHandle > 0) {
+        g_npcHandle.store(returnedHandle);
+        if (g_movementProbeAllowed) {
+            WriteProbeLog("BullyCoop v0.8: NPC spawned; press F10 to start/stop nearby remote movement\r\n");
+        }
+    }
 }
 
 // WH_GETMESSAGE runs within the game window's OWN thread. It avoids
@@ -471,8 +596,12 @@ static LRESULT CALLBACK NpcTestMessageHook(int code, WPARAM wp, LPARAM lp) {
         MSG* msg = reinterpret_cast<MSG*>(lp);
         if (g_spawnMessage && msg->message == g_spawnMessage &&
             msg->hwnd == g_gameWindow) {
-            if (GetForegroundWindow() == g_gameWindow) RunNpcSpawnExperiment();
-            else WriteProbeLog("BullyCoop v0.7: NPC spawn blocked (game not foreground)\r\n");
+            if (GetForegroundWindow() == g_gameWindow) {
+                if (msg->wParam == 0) RunNpcSpawnExperiment();
+                else if (msg->wParam == 1) RunNpcMovementExperiment();
+            } else if (msg->wParam == 0) {
+                WriteProbeLog("BullyCoop v0.8: NPC spawn blocked (game not foreground)\r\n");
+            }
             msg->message = WM_NULL; // Nothing for the game window proc to handle.
             msg->wParam = 0;
             msg->lParam = 0;
@@ -499,22 +628,22 @@ static bool InstallNpcTestWindowHook() {
     if (!wnd) return false;
     const DWORD windowThread = GetWindowThreadProcessId(wnd, nullptr);
     if (!windowThread) return false;
-    const UINT message = RegisterWindowMessageA("BullyCoop_Hamdan_NPC_Spawn_v07");
+    const UINT message = RegisterWindowMessageA("BullyCoop_Hamdan_NPC_Spawn_Move_v08");
     if (!message) return false;
     HHOOK hook = SetWindowsHookExA(WH_GETMESSAGE, NpcTestMessageHook, nullptr, windowThread);
     if (!hook) return false;
     g_spawnMessage = message;
     g_gameWindow = wnd;
     g_gameMessageHook = hook;
-    WriteProbeLog("BullyCoop v0.7: NPC test armed; press F9 once INSIDE the game\r\n");
+    WriteProbeLog("BullyCoop v0.8: NPC test armed; press F9 once INSIDE the game\r\n");
     return true;
 }
 
 static DWORD WINAPI PositionThread(LPVOID parameter) {
     const uintptr_t base = reinterpret_cast<uintptr_t>(parameter);
     if (!VersionMatches(base)) return 0;
-    WriteProbeLog("\r\n=== BullyCoop Hamdan v0.7 NEW SESSION ===\r\n");
-    WriteProbeLog("BullyCoop position v0.7: live actor lookup; network + optional NPC spawn test\r\n");
+    WriteProbeLog("\r\n=== BullyCoop Hamdan v0.8 NEW SESSION ===\r\n");
+    WriteProbeLog("BullyCoop position v0.8: network + opt-in NPC spawn/movement probe\r\n");
     NetworkProbe network = {};
     const bool networkEnabled = InitNetwork(&network);
     char probeIni[MAX_PATH] = {};
@@ -527,12 +656,25 @@ static DWORD WINAPI PositionThread(LPVOID parameter) {
         WriteProbeLog("BullyCoop v0.7: NPC native checks FAILED; spawn disabled\r\n");
         npcExperiment = false;
     }
+    g_movementProbeAllowed = npcExperiment && networkEnabled && probeIni[0] &&
+        GetPrivateProfileIntA("Experimental", "EnableRemoteMovementProbe", 0, probeIni) == 1;
+    if (g_movementProbeAllowed) {
+        g_movementNativeVerified = ValidatePedMovementFunction(base);
+        WriteProbeLog(g_movementNativeVerified ?
+            "BullyCoop v0.8: NPC movement signatures VERIFIED; press F9 then F10 (manual opt-in)\r\n" :
+            "BullyCoop v0.8: NPC movement native signature mismatch; MOVEMENT BLOCKED\r\n");
+        if (!g_movementNativeVerified) g_movementProbeAllowed = false;
+    } else {
+        WriteProbeLog("BullyCoop v0.8: movement DISABLED (safe default)\r\n");
+    }
     bool previouslyAvailable = false;
     Position previous = {};
     DWORD lastLog = 0;
     DWORD lastWait = 0;
     PositionStatus previousStatus = PositionStatus::Good;
     bool f9PreviouslyDown = false;
+    bool f10PreviouslyDown = false;
+    DWORD lastMovePost = 0;
     DWORD lastWindowTry = 0;
     while (true) {
         Sleep(100); // 10 reads/s for network; local log throttled below.
@@ -576,11 +718,31 @@ static DWORD WINAPI PositionThread(LPVOID parameter) {
                 WriteProbeLog("BullyCoop v0.7: PostMessage failed; no spawn\r\n");
         }
         f9PreviouslyDown = f9Down;
+        const bool f10Down = (GetAsyncKeyState(VK_F10) & 0x8000) != 0;
+        if (g_movementProbeAllowed && f10Down && !f10PreviouslyDown &&
+            status == PositionStatus::Good && g_npcHandle.load() > 0 &&
+            GetForegroundWindow() == g_gameWindow) {
+            const bool turnOn = !g_followEnabled.load();
+            g_followEnabled.store(turnOn);
+            WriteProbeLog(turnOn ?
+                "BullyCoop v0.8: F10 -> remote NPC movement ENABLED\r\n" :
+                "BullyCoop v0.8: F10 -> remote NPC movement STOPPED\r\n");
+        }
+        f10PreviouslyDown = f10Down;
         if (networkEnabled) {
             // Guest initiates contact by sending its local coordinates.
             // Host replies only after a valid guest packet has been received.
             if (status == PositionStatus::Good) SendNetworkPosition(&network, now);
             ReceiveNetworkPositions(&network, tick);
+            PublishRemoteSnapshot(network);
+            if (g_movementProbeAllowed && g_followEnabled.load() &&
+                g_npcHandle.load() > 0 && status == PositionStatus::Good &&
+                g_gameWindow && GetForegroundWindow() == g_gameWindow &&
+                tick - lastMovePost >= 150) {
+                // All Bully engine calls stay on the game window thread.
+                if (PostMessageA(g_gameWindow, g_spawnMessage, 1, 0))
+                    lastMovePost = tick;
+            }
         }
     }
     // Unreachable during normal game lifetime.
