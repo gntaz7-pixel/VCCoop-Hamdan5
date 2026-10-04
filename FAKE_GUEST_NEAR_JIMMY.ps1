@@ -48,7 +48,7 @@ try {
     $udp.Connect($hostIP, $hostPort)
     $udp.Client.ReceiveTimeout = 150
     $sender = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Any, 0)
-    Write-Host 'FAKE GUEST v0.14 -> SAFE 4.0m orbit; FLAT GROUND ONLY; run ONE fake client' -ForegroundColor Cyan
+    Write-Host 'FAKE GUEST v0.15 -> SAFE 4.0m orbit; FLAT GROUND ONLY; run ONE fake client' -ForegroundColor Cyan
     Write-Host 'Start Bully.exe as HOST FIRST. Close OTHER FAKE GUEST windows (host accepts one sender).'
     Write-Host 'Waiting for HOST replies; press Ctrl+C to stop.'
     $sequence = [uint32]0
