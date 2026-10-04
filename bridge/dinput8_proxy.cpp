@@ -1,7 +1,7 @@
-// Bully Co-op Hamdan | v0.15c SAFE CATCH-UP walking-task experiment | Bully: Scholarship Edition.
-// EXPERIMENT v0.15c: F9 spawn; F10 toggle bounded predictive WALK TASKS; F11 identity (NO TELEPORT).
+// Bully Co-op Hamdan | v0.16a ISOLATED LOCAL LOOPBACK diagnostics | Bully: Scholarship Edition.
+// EXPERIMENT v0.16a: two real processes, isolated protocol v2, logging; no teleport.
 // User visually verified v0.13 ONE walking task is attached and NPC walks a little before stopping.
-// v0.15c safe catch-up planner is UNTESTED IN GAME. F10 OFF prevents NEW tasks only.
+// v0.16a untested in game; F10 OFF stops new tasks only. No Internet multiplayer.
 // This is NOT a verified co-op mod. Never test in your only game installation.
 // This DLL is a DirectInput 8 proxy: it forwards actual input calls to the system DLL.
 #define WIN32_LEAN_AND_MEAN
@@ -16,6 +16,7 @@
 #include <cstring>
 #include <atomic>
 #include "safe_walk_planner.h"
+#include "loopback_wire.h"
 #pragma comment(lib, "Ws2_32.lib")
 
 static INIT_ONCE g_input_init = INIT_ONCE_STATIC_INIT;
@@ -260,8 +261,8 @@ static PositionStatus ReadJimmyPosition(uintptr_t base, Position* out) {
 // Shares positions between two game processes; does NOT instantiate a remote character.
 // All network access is disabled by default and requires explicit BullyCoop.ini settings.
 // Protocol is intentionally unencrypted; use on trusted private LAN/VPN only.
-static const uint32_t kNetworkMagic = 0x42434f50u; // "BCOP"
-static const uint16_t kNetworkVersion = 1;
+static const uint32_t kNetworkMagic = BullyLoopback::kNetworkMagic; // "BCOP"
+static const uint16_t kNetworkVersion = BullyLoopback::kNetworkVersion; // v2: stale fake guest v1 rejected
 static const DWORD kRemoteTimeoutMs = 3000;
 static const DWORD kPeerResetMs = 10000;
 
@@ -297,6 +298,10 @@ struct NetworkProbe {
     DWORD initializedAt = 0;
     DWORD lastNoPeerLog = 0;
     bool previouslyConnected = false;
+    DWORD lastRejectLog = 0;
+    uint32_t ignoredLegacy = 0;
+    uint32_t ignoredWrongCode = 0;
+    uint32_t ignoredOther = 0;
 };
 
 static void ReadGameDirectoryFile(const char* filename, char out[MAX_PATH]) {
@@ -389,11 +394,24 @@ static bool InitNetwork(NetworkProbe* net) {
         net->peerKnown = true;
     }
     net->enabled = true;
+    // Explicitly log REAL game process settings to expose wrong .ini copies.
+    {
+        char message[512] = {};
+        char peerIp[INET_ADDRSTRLEN] = "-";
+        if (!net->host) {
+            InetNtopA(AF_INET, &net->peer.sin_addr, peerIp, sizeof(peerIp));
+        }
+        sprintf_s(message, sizeof(message),
+            "BullyCoop v0.16a: NET CONFIG pid=%lu role=%s port=%u code=%u peer=%s protocol=%u loopback=%d ini=%s\r\n",
+            static_cast<unsigned long>(GetCurrentProcessId()), net->host ? "host" : "guest",
+            port, pin, peerIp, kNetworkVersion, loopbackHost ? 1 : 0, ini);
+        WriteProbeLog(message);
+    }
     // Only mark background movement after successfully binding the HOST socket
     // to the loopback interface. Other cases retain foreground-only dispatch.
     if (loopbackHost) {
         g_allowBackgroundHostAutoWalk.store(true);
-        WriteProbeLog("BullyCoop v0.16: LOCAL LOOPBACK HOST only; background AUTO walking enabled (opt-in)\r\n");
+        WriteProbeLog("BullyCoop v0.16a: LOCAL LOOPBACK HOST only; background AUTO walking enabled (opt-in)\r\n");
     }
     net->initializedAt = GetTickCount();
     WriteProbeLog(net->host ?
@@ -451,19 +469,43 @@ static void ReceiveNetworkPositions(NetworkProbe* net, DWORD tick) {
         const int count = recvfrom(net->socket, reinterpret_cast<char*>(&packet), sizeof(packet), 0,
                                    reinterpret_cast<sockaddr*>(&sender), &senderLength);
         if (count == SOCKET_ERROR) {
-            if (WSAGetLastError() != WSAEWOULDBLOCK)
-                WriteProbeLog("BullyCoop net: UDP receive error\r\n");
+            const int error = WSAGetLastError();
+            if (error != WSAEWOULDBLOCK && tick - net->lastRejectLog >= 15000) {
+                char errorLine[140] = {};
+                sprintf_s(errorLine, sizeof(errorLine),
+                    "BullyCoop v0.16a: UDP RX error=%d (Windows; retrying)\r\n", error);
+                WriteProbeLog(errorLine);
+                net->lastRejectLog = tick;
+            }
             break;
         }
         if (count != sizeof(packet) || sender.sin_family != AF_INET ||
-            ntohl(packet.magic) != kNetworkMagic || ntohs(packet.version) != kNetworkVersion ||
-            ntohl(packet.sessionCode) != net->sessionCode ||
-            ntohs(packet.senderRole) != (net->host ? 2 : 1)) continue;
+            ntohl(packet.magic) != kNetworkMagic) {
+            ++net->ignoredOther;
+            continue;
+        }
+        if (ntohs(packet.version) != kNetworkVersion) {
+            ++net->ignoredLegacy;
+            continue;
+        }
+        if (ntohl(packet.sessionCode) != net->sessionCode) {
+            ++net->ignoredWrongCode;
+            continue;
+        }
+        if (!BullyLoopback::ValidEnvelope(ntohl(packet.magic), ntohs(packet.version),
+              ntohs(packet.senderRole), ntohl(packet.sessionCode), net->sessionCode,
+              net->host)) {
+            ++net->ignoredOther;
+            continue;
+        }
         Position pos = {packet.x, packet.y, packet.z};
         if (!ValidNetworkPosition(pos)) continue;
         if (net->peerKnown) {
             if (sender.sin_addr.s_addr != net->peer.sin_addr.s_addr ||
-                sender.sin_port != net->peer.sin_port) continue;
+                sender.sin_port != net->peer.sin_port) {
+                ++net->ignoredOther;
+                continue;
+            }
         } else if (net->host) {
             net->peer = sender;
             net->peerKnown = true;
@@ -477,9 +519,27 @@ static void ReceiveNetworkPositions(NetworkProbe* net, DWORD tick) {
         net->haveRemote = true;
         net->lastReceived = tick;
         if (!net->previouslyConnected) {
+            char peerIp[INET_ADDRSTRLEN] = {};
+            InetNtopA(AF_INET, &sender.sin_addr, peerIp, sizeof(peerIp));
+            char peerLine[192] = {};
+            sprintf_s(peerLine, sizeof(peerLine),
+                "BullyCoop v0.16a: PEER VERIFIED role=%s from=%s:%u protocol=%u\r\n",
+                net->host ? "guest" : "host", peerIp,
+                static_cast<unsigned>(ntohs(sender.sin_port)), kNetworkVersion);
+            WriteProbeLog(peerLine);
             WriteProbeLog("BullyCoop net: first remote player position RECEIVED\r\n");
             net->previouslyConnected = true;
         }
+    }
+    if ((net->ignoredLegacy || net->ignoredWrongCode || net->ignoredOther) &&
+        tick - net->lastRejectLog >= 15000) {
+        char rejects[240] = {};
+        sprintf_s(rejects, sizeof(rejects),
+            "BullyCoop v0.16a: RX IGNORED legacy_v1=%u wrong_code=%u other=%u\r\n",
+            net->ignoredLegacy, net->ignoredWrongCode, net->ignoredOther);
+        WriteProbeLog(rejects);
+        net->ignoredLegacy = net->ignoredWrongCode = net->ignoredOther = 0;
+        net->lastRejectLog = tick;
     }
     if (net->haveRemote && tick - net->lastReceived > kRemoteTimeoutMs) {
         net->haveRemote = false;
@@ -680,7 +740,7 @@ static void RunNpcSingleWalkProbe() {
     if (!g_movementProbeAllowed || !g_movementNativeVerified) return;
     const uintptr_t base = reinterpret_cast<uintptr_t>(GetModuleHandleA(nullptr));
     if (!VersionMatches(base) || !ValidateWalkTaskFunction(base)) {
-        WriteProbeLog("BullyCoop v0.16: WALK BLOCKED: native code mismatch\r\n");
+        WriteProbeLog("BullyCoop v0.16a: WALK BLOCKED: native code mismatch\r\n");
         return;
     }
     Position remote = {};
@@ -696,7 +756,7 @@ static void RunNpcSingleWalkProbe() {
     velocity = g_remoteVelocity;
     ReleaseSRWLockShared(&g_remoteLock);
     if (!haveRemote || GetTickCount()-received > 500 || !ValidNetworkPosition(remote)) {
-        WriteProbeLog("BullyCoop v0.16: WALK SKIPPED: no fresh guest position\r\n");
+        WriteProbeLog("BullyCoop v0.16a: WALK SKIPPED: no fresh guest position\r\n");
         return;
     }
     // Target velocity LOOKAHEAD is ONLY for XY. Keep raw incoming Z unchanged.
@@ -716,7 +776,7 @@ static void RunNpcSingleWalkProbe() {
     Position jimmy = {}, npc = {};
     if (!ReadAt(base+kPlayerActorGlobalRva, &player) || !player ||
         ReadJimmyPosition(base,&jimmy) != PositionStatus::Good) {
-        WriteProbeLog("BullyCoop v0.16: WALK SKIPPED: Jimmy unavailable\r\n");
+        WriteProbeLog("BullyCoop v0.16a: WALK SKIPPED: Jimmy unavailable\r\n");
         return;
     }
     typedef void* (__cdecl* LookupPedFn)(int, int);
@@ -724,14 +784,14 @@ static void RunNpcSingleWalkProbe() {
     void* ped = nullptr;
     __try { ped = lookup(g_npcHandle.load(), 2); }
     __except(EXCEPTION_EXECUTE_HANDLER) {
-        WriteProbeLog("BullyCoop v0.16: WALK SKIPPED: NPC lookup exception; AUTO OFF\r\n");
+        WriteProbeLog("BullyCoop v0.16a: WALK SKIPPED: NPC lookup exception; AUTO OFF\r\n");
         g_autoWalkEnabled.store(false);
         return;
     }
     const uintptr_t npcAddress = reinterpret_cast<uintptr_t>(ped);
     if (!ped || npcAddress == static_cast<uintptr_t>(player) ||
         !ReadPedWorldPosition(ped,&npc)) {
-        WriteProbeLog("BullyCoop v0.16: WALK SKIPPED: no DISTINCT valid NPC; AUTO OFF\r\n");
+        WriteProbeLog("BullyCoop v0.16a: WALK SKIPPED: no DISTINCT valid NPC; AUTO OFF\r\n");
         g_autoWalkEnabled.store(false);
         return;
     }
@@ -742,12 +802,12 @@ static void RunNpcSingleWalkProbe() {
         !ReadAt(static_cast<uintptr_t>(nNested?nNested:npcAddress)+0x14u,&nTransform) ||
         !pTransform || !nTransform || pTransform==nTransform ||
         (pNested && nNested && pNested==nNested)) {
-        WriteProbeLog("BullyCoop v0.16: WALK BLOCKED: actor/transform identity unsafe; AUTO OFF\r\n");
+        WriteProbeLog("BullyCoop v0.16a: WALK BLOCKED: actor/transform identity unsafe; AUTO OFF\r\n");
         g_autoWalkEnabled.store(false);
         return;
     }
     if (std::fabs(remote.z-npc.z)>0.45f || std::fabs(jimmy.z-npc.z)>0.45f) {
-        WriteProbeLog("BullyCoop v0.16: WALK SKIPPED: uneven Z, open flat area only\r\n");
+        WriteProbeLog("BullyCoop v0.16a: WALK SKIPPED: uneven Z, open flat area only\r\n");
         return;
     }
     const BullySafeWalk::XY npcXY={npc.x,npc.y};
@@ -757,7 +817,7 @@ static void RunNpcSingleWalkProbe() {
     if (plan.status != BullySafeWalk::Status::Move) {
         char line[210]={};
         sprintf_s(line,sizeof(line),
-            "BullyCoop v0.16: WALK %s: dist=%.2f NPC-Jimmy=%.2f raw-Jimmy=%.2f lead=%.2f\r\n",
+            "BullyCoop v0.16a: WALK %s: dist=%.2f NPC-Jimmy=%.2f raw-Jimmy=%.2f lead=%.2f\r\n",
             plan.status==BullySafeWalk::Status::Reached ? "REACHED" : "UNSAFE",
             plan.remaining, BullySafeWalk::length(BullySafeWalk::sub(npcXY,jimmyXY)),
             BullySafeWalk::length(BullySafeWalk::sub(rawXY,jimmyXY)),lead);
@@ -786,13 +846,13 @@ static void RunNpcSingleWalkProbe() {
             if (task) attached=attach(reinterpret_cast<void*>(npcAddress+0x5F0u),task);
         }
     } __except(EXCEPTION_EXECUTE_HANDLER) {
-        WriteProbeLog("BullyCoop v0.16: WALK TASK Windows exception; AUTO OFF; STOP testing / send log\r\n");
+        WriteProbeLog("BullyCoop v0.16a: WALK TASK Windows exception; AUTO OFF; STOP testing / send log\r\n");
         g_autoWalkEnabled.store(false);
         return;
     }
     char line[480] = {};
     sprintf_s(line,sizeof(line),
-        "BullyCoop v0.16: SAFE WALK TASK handle=%d mode=%s%s raw=%.2f,%.2f waypoint=%.2f,%.2f,%.2f remaining=%.2f step=%.2f gapJimmy=%.2f chordJimmy=%.2f lead=%.2f allocated=%d attached=%d; VERIFY VISUALLY\r\n",
+        "BullyCoop v0.16a: SAFE WALK TASK handle=%d mode=%s%s raw=%.2f,%.2f waypoint=%.2f,%.2f,%.2f remaining=%.2f step=%.2f gapJimmy=%.2f chordJimmy=%.2f lead=%.2f allocated=%d attached=%d; VERIFY VISUALLY\r\n",
         g_npcHandle.load(),plan.detour?"DETOUR":"DIRECT",plan.catchup?"+CATCHUP":"",remote.x,remote.y,
         destination.x,destination.y,destination.z,plan.remaining,plan.step,plan.gapJimmy,plan.segmentJimmy,lead,allocated?1:0,attached?1:0);
     WriteProbeLog(line);
@@ -831,7 +891,7 @@ static void RunNpcSpawnExperiment() {
     if (returnedHandle > 0) {
         g_npcHandle.store(returnedHandle);
         if (g_movementProbeAllowed) {
-            WriteProbeLog("BullyCoop v0.16: NPC spawned; F10 = AUTO WALK ON/OFF (configurable bounded interval); F11 = READ-ONLY ID report\r\n");
+            WriteProbeLog("BullyCoop v0.16a: NPC spawned; F10 = AUTO WALK ON/OFF (configurable bounded interval); F11 = READ-ONLY ID report\r\n");
         }
     }
 }
@@ -888,15 +948,15 @@ static bool InstallNpcTestWindowHook() {
     g_spawnMessage = message;
     g_gameWindow = wnd;
     g_gameMessageHook = hook;
-    WriteProbeLog("BullyCoop v0.16: NPC test armed; press F9 once INSIDE the game\r\n");
+    WriteProbeLog("BullyCoop v0.16a: NPC test armed; press F9 once INSIDE the game\r\n");
     return true;
 }
 
 static DWORD WINAPI PositionThread(LPVOID parameter) {
     const uintptr_t base = reinterpret_cast<uintptr_t>(parameter);
     if (!VersionMatches(base)) return 0;
-    WriteProbeLog("\r\n=== BullyCoop Hamdan v0.16 LOCAL LOOPBACK TWO-WINDOW TEST NEW SESSION ===\r\n");
-    WriteProbeLog("BullyCoop position v0.16: two-window LOCAL LOOPBACK + safe catch-up; no teleport\r\n");
+    WriteProbeLog("\r\n=== BullyCoop Hamdan v0.16a ISOLATED LOOPBACK TWO-WINDOW TEST NEW SESSION ===\r\n");
+    WriteProbeLog("BullyCoop position v0.16a: two-window LOCAL LOOPBACK + safe catch-up; no teleport\r\n");
     NetworkProbe network = {};
     const bool networkEnabled = InitNetwork(&network);
     char probeIni[MAX_PATH] = {};
@@ -922,7 +982,7 @@ static DWORD WINAPI PositionThread(LPVOID parameter) {
     {
         char intervalLine[164] = {};
         sprintf_s(intervalLine, sizeof(intervalLine),
-            "BullyCoop v0.16: configured WalkTaskIntervalMs=%lu (bounded 900-2800, default 1300)\r\n",
+            "BullyCoop v0.16a: configured WalkTaskIntervalMs=%lu (bounded 900-2800, default 1300)\r\n",
             static_cast<unsigned long>(g_walkTaskIntervalMs));
         WriteProbeLog(intervalLine);
     }
@@ -933,18 +993,18 @@ static DWORD WINAPI PositionThread(LPVOID parameter) {
     {
         char leadLine[150] = {};
         sprintf_s(leadLine, sizeof(leadLine),
-            "BullyCoop v0.16: configured WalkLeadCm=%lu (bounded 0-240; 0 disables prediction)\r\n",
+            "BullyCoop v0.16a: configured WalkLeadCm=%lu (bounded 0-240; 0 disables prediction)\r\n",
             static_cast<unsigned long>(g_walkLeadCm));
         WriteProbeLog(leadLine);
     }
     if (g_movementProbeAllowed) {
         g_movementNativeVerified = ValidatePedMovementFunction(base) && ValidateWalkTaskFunction(base);
         WriteProbeLog(g_movementNativeVerified ?
-            "BullyCoop v0.16: WALK native signatures verified OFFLINE; F10 toggles AUTO WALK tasks (risky)\r\n" :
-            "BullyCoop v0.16: WALK signature mismatch; experimental movement disabled\r\n");
+            "BullyCoop v0.16a: WALK native signatures verified OFFLINE; F10 toggles AUTO WALK tasks (risky)\r\n" :
+            "BullyCoop v0.16a: WALK signature mismatch; experimental movement disabled\r\n");
         if (!g_movementNativeVerified) g_movementProbeAllowed = false;
     } else {
-        WriteProbeLog("BullyCoop v0.16: AUTO walking DISABLED (safe default); F9 spawn optional\r\n");
+        WriteProbeLog("BullyCoop v0.16a: AUTO walking DISABLED (safe default); F9 spawn optional\r\n");
     }
     bool previouslyAvailable = false;
     Position previous = {};
@@ -1012,11 +1072,11 @@ static DWORD WINAPI PositionThread(LPVOID parameter) {
                 lastAutoDispatch = tick - (g_walkTaskIntervalMs - 100);
                 char line[150]={};
                 sprintf_s(line,sizeof(line),
-                    "BullyCoop v0.16: F10 -> AUTO WALK ENABLED (tasks >=%lu ms apart)\r\n",
+                    "BullyCoop v0.16a: F10 -> AUTO WALK ENABLED (tasks >=%lu ms apart)\r\n",
                     static_cast<unsigned long>(g_walkTaskIntervalMs));
                 WriteProbeLog(line);
             } else {
-                WriteProbeLog("BullyCoop v0.16: F10 -> AUTO WALK DISABLED (last engine task may finish)\r\n");
+                WriteProbeLog("BullyCoop v0.16a: F10 -> AUTO WALK DISABLED (last engine task may finish)\r\n");
             }
         }
         f10PreviouslyDown = f10Down;
@@ -1025,7 +1085,7 @@ static DWORD WINAPI PositionThread(LPVOID parameter) {
             status == PositionStatus::Good && g_npcHandle.load() > 0 &&
             GetForegroundWindow() == g_gameWindow) {
             g_followEnabled.store(!g_followEnabled.load());
-            WriteProbeLog("BullyCoop v0.16: F11 -> READ-ONLY actor identity diagnostics toggled\r\n");
+            WriteProbeLog("BullyCoop v0.16a: F11 -> READ-ONLY actor identity diagnostics toggled\r\n");
         }
         f11PreviouslyDown=f11Down;
         if (networkEnabled) {
@@ -1048,7 +1108,7 @@ static DWORD WINAPI PositionThread(LPVOID parameter) {
                 if (!PostMessageA(g_gameWindow,g_spawnMessage,2,0)) {
                     g_movePostPending.store(false);
                     g_autoWalkEnabled.store(false);
-                    WriteProbeLog("BullyCoop v0.16: AUTO WALK PostMessage failed; AUTO OFF\r\n");
+                    WriteProbeLog("BullyCoop v0.16a: AUTO WALK PostMessage failed; AUTO OFF\r\n");
                 }
             }
             // F11 requests read-only diagnostic callbacks only.

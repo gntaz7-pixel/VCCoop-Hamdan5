@@ -27,4 +27,10 @@ if errorlevel 1 exit /b 1
 "out\test_safe_walk.exe"
 if errorlevel 1 exit /b 1
 echo PASS: safe waypoint planner tests
+rem Verify isolated UDP envelope rejects legacy fake guest packets.
+cl /nologo /W4 /EHsc /std:c++17 "tests\test_loopback_wire.cpp" /Fe:"out\test_loopback_wire.exe"
+if errorlevel 1 exit /b 1
+"out\test_loopback_wire.exe"
+if errorlevel 1 exit /b 1
+echo PASS: isolated loopback wire test
 echo SUCCESS: out\dinput8.dll
