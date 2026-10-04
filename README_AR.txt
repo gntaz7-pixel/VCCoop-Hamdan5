@@ -1,43 +1,29 @@
-Bully Co-op Hamdan v0.15c — SAFE CATCH-UP / STAND-OFF (SOURCE ONLY)
+Bully Co-op Hamdan v0.16 — LOCAL LOOPBACK / TWO WINDOWS (SOURCE ONLY)
 
-WHY: last v0.15b log had multiple WALK SKIPPED attempts at dist 9..23 XY units: the old 8-unit cap blocked catch-up indefinitely. Other skips came from the straight walk chord crossing within ~2.75 of Jimmy. User reports occasional smooth walking but recurring stalls.
+This tests TWO REAL Bully.exe processes on the SAME Windows PC. It is NOT internet multiplayer, and the second visual Jimmy is still an NPC driven by another game's location updates (not full controllable co-op).
 
-CHANGES
-- Distances greater than 8 XY units are broken into at most 5.8-unit engine walking tasks, rather than rejected.
-- If walking in a straight line would pass near Jimmy, a side-step / orbit-style waypoint is planned OUTSIDE his protective radius.
-- If predictive remote target ends up near Jimmy, the waypoint remains at safe stand-off distance.
-- Strict NPC vs player ACTOR and TRANSFORM identity checks retained.
-- Strict flat Z ground check retained; no teleport, no direct position writing, no per-frame calls.
-- The source now has standalone C++ planner tests, compiled by GitHub Actions' Windows build script.
-- Logs explicitly name DIRECT or DETOUR / CATCHUP / REACHED / UNSAFE.
+IMPORTANT game limitation: Bully might refuse to launch a second simultaneous instance. Also Bully might pause when losing focus, so background host physics may not advance even though the mod is allowed to issue tasks. This is NOT confirmed to work on Windows/game yet; do NOT circumvent DRM or existing executable protections.
 
-HOW TO BUILD
-1. Upload the extracted ZIP content to GitHub project gntaz7-pixel/VCCoop-Hamdan5.
-2. GitHub Actions -> Build Bully Co-op Safe Catchup v0.15c (x86).
-3. Get out/dinput8.dll from Actions artifact BullyCoop-Hamdan-SafeCatchup-v15c-x86.
-4. Preserve last working v0.15b DLL for rollback and use a separate test copy of Bully.
-5. Place BullyCoop.ini in Bully.exe directory, using the host INI below.
-6. In a wide FLAT area, start only this ZIP's FAKE_GUEST_NEAR_JIMMY.cmd and wait HOST FOUND!
-7. F9 spawn once, F10 ON, watch 20 seconds; F10 OFF (last walking task may finish).
-8. Send BullyCoop_bridge.log and describe NPC stop-go and whether base Jimmy works.
+SETUP:
+1. Preserve your original game / saves; make TWO independent test game directories, e.g. Bully_HOST and Bully_GUEST.
+2. Upload extracted source ZIP to GitHub repo; Actions -> Build Bully Co-op LOOPBACK v0.16 (x86); get the x86 out/dinput8.dll artifact.
+3. Put SAME new dinput8.dll next to Bully.exe in BOTH game directories.
+4. Copy HOST_COPY/BullyCoop.ini beside HOST Bully.exe; copy GUEST_COPY/BullyCoop.ini beside GUEST Bully.exe. Verify role and localhost address before opening games.
+5. Close FAKE_GUEST cmd and any earlier Bully processes. Start HOST game, load free roam in an OPEN FLAT place.
+6. Start GUEST game from GUEST directory. If Windows/game refuses a second simultaneous game process, stop and tell us; this test requires two processes.
+7. Bring HOST window to front, press F9 ONCE to spawn an NPC. Press F10 ONCE to start host auto walking. Do NOT press F9/F10 in GUEST.
+8. Bring GUEST window to front. Move guest Jimmy for 15-20 seconds in an OPEN FLAT area. Host accepts only guest UDP from 127.0.0.1; automatic NPC walk messages are allowed while host unfocused.
+9. Bring HOST to front to see NPC. Note: on unfocused/pause-prone games, you may only see motion after bringing HOST to front.
+10. After test, HOST F10 OFF stops issuing NEW tasks, not already active task. Close both games WITHOUT saving.
+11. Send HOST and GUEST BullyCoop_bridge.log (TWO separate files, one from each directory), describe both windows and how NPC moved.
 
-BullyCoop.ini
-[Network]
-Enabled=1
-Role=host
-Port=7791
-SessionCode=246813
+SAFETY: Never test on sole game installation; no save, use only open flat terrain, stop immediately if Jimmy original is affected, clips terrain or crash. Back up your working v0.15c DLL. No teleport/direct position writes. This tests LOOPBACK only, no internet-facing host. After success, LAN and actual online require further work.
 
-[Experimental]
-EnableNPCSpawnProbe=1
-EnableRemoteMovementProbe=1
-EnableNPCWalkProbe=1
-WalkTaskIntervalMs=1300
-WalkLeadCm=180
-
-LIMITATIONS
-- Only test geometry / sources verified offline; no real Windows compile or Bully game run performed here.
-- Geometry checks do NOT navigate walls, slopes, NPC collisions, or obstacles. Open flat area ONLY.
-- Do not save; stop immediately if unintended Jimmy movement, terrain clipping, or crash.
-- This is a fake guest, NOT 2-device online multiplayer. Next milestone (v0.16) = first 2-device LAN positions and walking.
-- If NPC is despawned and logs "no DISTINCT valid NPC; AUTO OFF", reload test session rather than forcing stale handle.
+NETWORK DETAILS:
+- HOST binds ONLY to loopback 127.0.0.1:7791 when AllowBackgroundHostWalk=1.
+- GUEST uses HostAddress=127.0.0.1 with ephemeral UDP source port.
+- No FAKE_GUEST. Both game windows need independent processes and configs.
+- This version runs safe engine-task walks on background host when guest window is foreground; game may itself pause background simulation.
+- F9/F10 hotkeys always require host window focused, so guest keypresses won't accidentally toggle host.
+- Do not enable AllowBackgroundHostWalk for play across two PCs; this host option forces loopback-only binding.
+- Platform not tested; Windows x86 compilation & full gameplay need user's GitHub Actions and manual tests.
