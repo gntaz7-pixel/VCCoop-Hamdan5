@@ -15,7 +15,7 @@ if not defined VSINSTALL (
 call "%VSINSTALL%\VC\Auxiliary\Build\vcvarsall.bat" x86
 if errorlevel 1 exit /b 1
 if not exist out mkdir out
-cl /nologo /W4 /O2 /EHsc /LD /DWIN32 /D_WINDOWS "bridge\dinput8_proxy.cpp" /link /NOLOGO /MACHINE:X86 /DEF:"bridge\dinput8.def" /OUT:"out\dinput8.dll" /IMPLIB:"out\dinput8.lib"
+cl /nologo /W4 /O2 /EHsc /LD /DWIN32 /D_WINDOWS "bridge\dinput8_proxy.cpp" /link /NOLOGO /MACHINE:X86 /DEF:"bridge\dinput8.def" /OUT:"out\dinput8.dll" /IMPLIB:"out\dinput8.lib" user32.lib
 if errorlevel 1 exit /b 1
 if not exist "out\dinput8.dll" (
   echo ERROR: DLL was not produced.
