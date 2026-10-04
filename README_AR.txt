@@ -1,22 +1,33 @@
-﻿Bully Co-op - Hamdan Edition v0.13 (SOURCE ONLY)
+﻿Bully Co-op — Hamdan Edition v0.14 (SOURCE ONLY)
 
-NEW: ONE-SHOT PED WALK TASK - EXPERIMENTAL, UNTESTED IN GAME.
-Bully.exe exactly 8,204,288 bytes. Confirmed F9 spawn and v0.12 separate NPC actor pointers in previous test.
+CURRENT RESULTS VERIFIED BY HAMDAN: v0.13 spawned NPC and NPC visibly walked a little on each F10 press. Log showed engine walk tasks attached=1, and Jimmy's logged location was stable while walk tasks were issued. This is NOT fully working multiplayer.
 
-F9 - Create ONE NPC (once per game session).
-F10 - Submit ONE walking task to the NPC based on latest guest position. No teleport, no continuous forced movement. Each press is a single experiment, not on/off. May CRASH, FREEZE or affect Jimmy (unverified!).
-F11 - Toggle READ-ONLY actor pointer report (like v0.12).
+NEW v0.14 EXPERIMENT — AUTO ENGINE WALK TASKS:
+F9: Spawn one NPC in free roam; only once per game session.
+F10: Toggle AUTO walk task issuing ON/OFF. When enabled, and only if GUEST has fresh coordinate packets, a walk task is sent every 2.8 seconds at most. NO PedSetPosXYZ. F10 OFF stops NEW tasks; already issued engine walking task can finish.
+F11: Toggle read-only identity diagnostics.
 
-SAFETY: In BullyCoop.ini set EnableNPCWalkProbe=0 first, check Bully runs and F9 spawns. Only after backup, open flat ground and change EnableNPCWalkProbe=1. Do not save.
+SAFETY: Test on COPIED game folder ONLY; back up original DLL, never save after test. Risk of crash, task allocation leak, NPC despawn, wall collision or Jimmy movement. If Jimmy is moved involuntarily, STOP experiment and restore v0.13/v0.12 immediately.
 
-Network enabled: HOST local UDP 7791 SessionCode 246813.
+BullyCoop.ini (HOST):
+[Network]
+Enabled=1
+Role=host
+Port=7791
+SessionCode=246813
 [Experimental]
 EnableNPCSpawnProbe=1
 EnableRemoteMovementProbe=1
 EnableNPCWalkProbe=1
 
-Testing: Close all OLD FAKE_GUEST tools. Start Bully HOST and wait until in free-roam outdoor FLAT open ground. Start FAKE_GUEST_NEAR_JIMMY.cmd from v0.11 ZIP (SAFE 4.0m orbit), wait HOST FOUND. F9 once, ensure NPC starts separated. Press F10 ONCE, observe NPC and Jimmy. F10 again only if first walk task was safely completed and NPC is still away from Jimmy; there is NO stop button for engine task once issued. F11 toggle read-only logging. Stop immediately if Jimmy moves involuntarily. Send BullyCoop_bridge.log.
+HOW TO TEST:
+1. GitHub upload all files, let GitHub Actions build Windows x86 DLL. This ZIP contains SOURCE ONLY.
+2. Keep backup of working dinput8.dll and install new compiled DLL beside Bully.exe in copied game folder.
+3. Close other FAKE_GUEST processes/windows. Start Bully.exe as host, reach OPEN FLAT ground away from missions/walls.
+4. Launch included FAKE_GUEST_NEAR_JIMMY.cmd and verify 'FAKE GUEST v0.14' / 'HOST FOUND'. This is only a simulated player, not a real multiplayer client.
+5. Press F9 once to spawn the second NPC. Press F10 ONCE to enable repeated engine walk tasks. Watch for ~15 seconds while moving Jimmy a little.
+6. Press F10 again to disable NEW tasks. Previous walk may finish. If anything goes wrong, close game WITHOUT saving and send BullyCoop_bridge.log.
 
-Static inspection found PedMoveToXYZ script wrapper -> task allocator(0x5EEAA0), task constructor(0x4705B0), task attachment(0x471390), matching this Bully.exe. Task calling convention and suitability in injected DLL remain UNPROVEN. Runtime code verifies byte signatures and separate NPC transform.
+WHY THIS IS SAFER THAN v0.9-v0.11: no forced location changes. Movement tasks use the engine routines observed to work in v0.13. Target is refused if distance exceeds 8.0, if too close to Jimmy, if the straight-line segment to target would pass within 2.75 of Jimmy, or if elevation difference is large. Only sends tasks on game's own window thread, at most once per 2.8 seconds with fresh network packet. It is STILL EXPERIMENTAL and cannot guarantee collision/path correctness or character animations.
 
-TEST ON A BACKUP ONLY. Not yet full co-op. Do not share on public untrusted network. Builds through GitHub Actions, Windows x86.
+SUPPORTED GAME: same Bully.exe 8,204,288 bytes as prior tests. Do not use in other versions. Network protocol is UNENCRYPTED: private trusted LAN only. This is not complete co-op. No mission sync, fights, cutscenes, saves, net security or reliable remote player control.

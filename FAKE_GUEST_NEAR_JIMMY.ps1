@@ -48,7 +48,7 @@ try {
     $udp.Connect($hostIP, $hostPort)
     $udp.Client.ReceiveTimeout = 150
     $sender = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Any, 0)
-    Write-Host 'FAKE GUEST v0.11 -> SAFE 4.0m orbit; FLAT GROUND ONLY; run ONE fake client' -ForegroundColor Cyan
+    Write-Host 'FAKE GUEST v0.14 -> SAFE 4.0m orbit; FLAT GROUND ONLY; run ONE fake client' -ForegroundColor Cyan
     Write-Host 'Start Bully.exe as HOST FIRST. Close OTHER FAKE GUEST windows (host accepts one sender).'
     Write-Host 'Waiting for HOST replies; press Ctrl+C to stop.'
     $sequence = [uint32]0
@@ -66,8 +66,8 @@ try {
         $seconds = $t.Elapsed.TotalSeconds
         # Flat-area test only: 4.0m radius (outside Jimmy collision zone), slow circle.
         # No game injection here: pure UDP test coordinates.
-        $x = [single]($baseX + 4.0 * [Math]::Cos($seconds * 0.18))
-        $y = [single]($baseY + 4.0 * [Math]::Sin($seconds * 0.18))
+        $x = [single]($baseX + 4.0 * [Math]::Cos($seconds * 0.15))
+        $y = [single]($baseY + 4.0 * [Math]::Sin($seconds * 0.15))
         $z = [single]$baseZ
         $packet = Build-GuestPacket $sequence $x $y $z
         [void]$udp.Send($packet, $packet.Length)
