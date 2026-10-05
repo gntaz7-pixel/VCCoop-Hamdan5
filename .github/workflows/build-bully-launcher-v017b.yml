@@ -1,18 +1,3 @@
-// Bully Co-op Hamdan | Launcher v0.17b LAN LOBBY ALPHA
-// Independent Windows Forms launcher. Bully gameplay remains in unchanged v0.16b DLL.
-// This is NOT a mission-complete co-op mod. One host and one guest only.
-using System;
-using System.Drawing;
-using System.IO;
-using System.Net;
-using System.Net.Sockets;
-using System.Security.Cryptography;
-using System.Text;
-using System.Diagnostics;
-using System.Threading;
-using System.Threading.Tasks;
-using System.Windows.Forms;
-
 namespace BullyCoopHamdan {
     public sealed class Launcher : Form {
         const long KnownExeSize = 8204288; // validated by the existing v0.16b bridge
