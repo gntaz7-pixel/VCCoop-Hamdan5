@@ -1,0 +1,43 @@
+Bully Co-op Hamdan v0.17a - EASY GITHUB WEB UPLOAD
+===================================================
+
+هذه الحزمة مقصودة للرفع من موقع GitHub مباشرة.
+كل الملفات بداخلها ترفع إلى الصفحة الرئيسية للمستودع (Repository Root).
+لا يوجد مجلد .github داخل هذه الحزمة عمدًا.
+
+الخطوة 1:
+- فك الضغط على الكمبيوتر.
+- افتح المستودع في GitHub > Code.
+- Add file > Upload files.
+- اسحب كل الملفات الموجودة داخل هذا المجلد مرة واحدة.
+- Commit changes.
+
+يجب أن ترى في الصفحة الرئيسية:
+BullyCoopLauncher.cs
+BUILD_LAUNCHER.cmd
+BUILD_WINDOWS.cmd
+dinput8_proxy.cpp
+dinput8.def
+loopback_wire.h
+safe_walk_planner.h
+test_safe_walk.cpp
+test_loopback_wire.cpp
+BullyCoop_HOST.ini
+BullyCoop_GUEST.ini
+README_AR.txt
+README_LAUNCHER_AR.txt
+
+الخطوة 2:
+لا ترفع ملف Action بالطريقة العادية.
+من GitHub اختر Add file > Create new file.
+اكتب اسم الملف كاملًا:
+.github/workflows/build-bully-coop-v017a.yml
+ثم الصق محتوى ملف build-bully-coop-v017a.yml الذي أعطاك ChatGPT.
+Commit changes.
+
+الخطوة 3:
+Actions > Build Bully Coop Hamdan v0.17a Easy > Run workflow
+بعد نجاح البناء نزّل Artifact:
+BullyCoop-Hamdan-v017a-Windows
+
+لا ترفع Bully.exe أو ملفات اللعبة الأصلية أو ملفات log إلى GitHub.

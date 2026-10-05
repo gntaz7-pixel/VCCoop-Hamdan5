@@ -7,7 +7,7 @@ if not exist "%CSC%" (
   exit /b 1
 )
 if not exist out mkdir out
-"%CSC%" /nologo /target:winexe /platform:x86 /optimize+ /codepage:65001 /out:out\BullyCoopLauncher.exe /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll launcher\BullyCoopLauncher.cs
+"%CSC%" /nologo /target:winexe /platform:x86 /optimize+ /codepage:65001 /out:out\BullyCoopLauncher.exe /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll BullyCoopLauncher.cs
 if errorlevel 1 exit /b 1
 if not exist "out\BullyCoopLauncher.exe" (
   echo ERROR: Launcher was not created.

@@ -15,22 +15,15 @@ if not defined VSINSTALL (
 call "%VSINSTALL%\VC\Auxiliary\Build\vcvarsall.bat" x86
 if errorlevel 1 exit /b 1
 if not exist out mkdir out
-cl /nologo /W4 /O2 /EHsc /LD /DWIN32 /D_WINDOWS "bridge\dinput8_proxy.cpp" /link /NOLOGO /MACHINE:X86 /DEF:"bridge\dinput8.def" /OUT:"out\dinput8.dll" /IMPLIB:"out\dinput8.lib" user32.lib
+cl /nologo /W4 /O2 /EHsc /LD /DWIN32 /D_WINDOWS dinput8_proxy.cpp /link /NOLOGO /MACHINE:X86 /DEF:dinput8.def /OUT:out\dinput8.dll /IMPLIB:out\dinput8.lib user32.lib
 if errorlevel 1 exit /b 1
-if not exist "out\dinput8.dll" (
-  echo ERROR: DLL was not produced.
-  exit /b 1
-)
-rem Compile and run a Windows x86 planner safety test (independent of Bully.exe).
-cl /nologo /W4 /EHsc /std:c++17 "tests\test_safe_walk.cpp" /Fe:"out\test_safe_walk.exe"
+if not exist "out\dinput8.dll" exit /b 1
+cl /nologo /W4 /EHsc /std:c++17 test_safe_walk.cpp /Fe:out\test_safe_walk.exe
 if errorlevel 1 exit /b 1
-"out\test_safe_walk.exe"
+out\test_safe_walk.exe
 if errorlevel 1 exit /b 1
-echo PASS: safe waypoint planner tests
-rem Verify isolated UDP envelope rejects legacy fake guest packets.
-cl /nologo /W4 /EHsc /std:c++17 "tests\test_loopback_wire.cpp" /Fe:"out\test_loopback_wire.exe"
+cl /nologo /W4 /EHsc /std:c++17 test_loopback_wire.cpp /Fe:out\test_loopback_wire.exe
 if errorlevel 1 exit /b 1
-"out\test_loopback_wire.exe"
+out\test_loopback_wire.exe
 if errorlevel 1 exit /b 1
-echo PASS: isolated loopback wire test
 echo SUCCESS: out\dinput8.dll
