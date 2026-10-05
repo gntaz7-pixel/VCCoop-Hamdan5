@@ -1,4 +1,4 @@
-// Bully Co-op Hamdan | Launcher v0.17 LAN LOBBY ALPHA
+// Bully Co-op Hamdan | Launcher v0.17b LAN LOBBY ALPHA
 // Independent Windows Forms launcher. Bully gameplay remains in unchanged v0.16b DLL.
 // This is NOT a mission-complete co-op mod. One host and one guest only.
 using System;
@@ -43,7 +43,7 @@ namespace BullyCoopHamdan {
         long gameLogStartLength; // prevents a previous session from faking a UDP handshake
 
         public Launcher() {
-            Text = "Bully Co-op Hamdan | Launcher v0.17 ALPHA";
+            Text = "Bully Co-op Hamdan | Launcher v0.17b ALPHA";
             ClientSize = new Size(904, 692);
             MinimumSize = new Size(925, 731);
             BackColor = Back;
@@ -90,7 +90,7 @@ namespace BullyCoopHamdan {
         }
         void BuildInterface() {
             L("BULLY  /  CO-OP", 27, 20, 480, 43, 26, TextColor);
-            L("HAMDAN  •  LAUNCHER v0.17", 30, 65, 450, 24, 11, Accent);
+            L("HAMDAN  •  LAUNCHER v0.17b", 30, 65, 450, 24, 11, Accent);
             L("PRIVATE TEST • 1 HOST + 1 GUEST", 595, 34, 310, 26, 11, Cyan);
 
             L("مجلد اللعبة (Bully.exe و dinput8.dll)", 29, 106, 570, 28, 11, Subtle);
@@ -107,7 +107,7 @@ namespace BullyCoopHamdan {
             L("عنوان الـHost (في جهاز الضيف)", 284, 189, 370, 23, 10, Subtle);
             L("المنفذ", 658, 189, 110, 23, 10, Subtle);
             nick = T(29, 214, 240, "Hamdan");
-            hostAddress = T(284, 214, 360, "127.0.0.1");
+            hostAddress = T(284, 214, 360, "");
             roomPort = T(658, 214, 110, DefaultPort.ToString());
             L("رمز الغرفة (6 أرقام)", 29, 259, 270, 26, 10, Subtle);
             roomCode = T(29, 285, 240, "");
@@ -116,7 +116,7 @@ namespace BullyCoopHamdan {
             samePc.SetBounds(285, 286, 375, 32);
             samePc.ForeColor = Cyan;
             samePc.BackColor = Back;
-            samePc.Checked = true;
+            samePc.Checked = false;
             samePc.CheckedChanged += (sender, e) => {
                 if (samePc.Checked) hostAddress.Text = "127.0.0.1";
                 else if (hostAddress.Text == "127.0.0.1") hostAddress.Text = FindLocalIPv4();
